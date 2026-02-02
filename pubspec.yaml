@@ -1,0 +1,41 @@
+name: align_app
+description: Align relationship assessment app
+publish_to: 'none'
+
+version: 1.0.0+1
+
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # RevenueCat
+  purchases_flutter: ^9.10.8
+
+  # Shared preferences for storing scores
+  shared_preferences: ^2.4.20
+
+  # Charts for score history
+  fl_chart: ^1.1.1
+
+  # Sharing feature for premium users
+  share_plus: ^12.0.1
+
+  cupertino_icons: ^1.0.8
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  # flutter_lints: ^6.1.0
+  
+  flutter_lints: ^3.0.1
+
+
+flutter:
+  uses-material-design: true
+
+  # If you add assets/images later, define them here as a list:
+  # assets:
+  #   - assets/images/
