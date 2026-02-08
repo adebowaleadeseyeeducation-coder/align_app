@@ -1,9 +1,6 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/foundation.dart' show kIsWeb, kReleaseMode;
-import 'package:purchases_flutter/purchases_flutter.dart';
-import 'package:shared_preferences/shared_preferences.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:share_plus/share_plus.dart';
-// import 'package:fl_chart/fl_chart.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -52,7 +49,7 @@ class OnboardingPage extends StatelessWidget {
               ),
               const SizedBox(height: 20),
               const Text(
-                'See how well this relationship\nis meeting your needs',
+                'Measure how well this relationship\nis truly aligned',
                 textAlign: TextAlign.center,
                 style: TextStyle(fontSize: 22),
               ),
@@ -115,9 +112,7 @@ class LensSelectionPage extends StatelessWidget {
       onPressed: () {
         Navigator.push(
           context,
-          MaterialPageRoute(
-            builder: (_) => AssessmentPage(lens: lens),
-          ),
+          MaterialPageRoute(builder: (_) => AssessmentPage(lens: lens)),
         );
       },
       child: SizedBox(
@@ -151,7 +146,10 @@ class AssessmentPage extends StatefulWidget {
 }
 
 class _AssessmentPageState extends State<AssessmentPage> {
-  final List<double> scores = List.filled(7, 5.0);
+  final List<double> scores = List.filled(7, 0);
+  final Set<int> touched = {};
+
+  bool get allCompleted => touched.length == pillars.length;
 
   @override
   Widget build(BuildContext context) {
@@ -167,86 +165,43 @@ class _AssessmentPageState extends State<AssessmentPage> {
               Text(pillars[i], style: const TextStyle(fontSize: 18)),
               Slider(
                 value: scores[i],
-                min: 1,
+                min: 0,
                 max: 10,
-                divisions: 9,
+                divisions: 10,
                 label: scores[i].round().toString(),
-                onChanged: (v) => setState(() => scores[i] = v),
+                onChanged: (v) {
+                  setState(() {
+                    scores[i] = v;
+                    touched.add(i);
+                  });
+                },
               ),
               const SizedBox(height: 20),
             ],
           );
         },
       ),
-      floatingActionButton: FloatingActionButton.extended(
-        label: const Text('See Results'),
-        onPressed: () async {
-          final average = (scores.reduce((a, b) => a + b) / scores.length) * 10;
-
-          final prefs = await SharedPreferences.getInstance();
-          await prefs.setDouble('last_score', average);
-
-          if (!context.mounted) return;
-          Navigator.pushReplacement(
-            context,
-            MaterialPageRoute(
-              builder: (_) => ResultsPage(average: average),
-            ),
-          );
-        },
-      ),
-    );
-  }
-}
-
-/// ─────────────────────────────────────────
-/// RESULTS
-/// ─────────────────────────────────────────
-class ResultsPage extends StatelessWidget {
-  final double average;
-  const ResultsPage({super.key, required this.average});
-
-  String insight(double score) {
-    if (score >= 80) return 'Strong alignment. This relationship is healthy.';
-    if (score >= 60) return 'Moderate alignment. Some areas need attention.';
-    return 'Low alignment. Serious gaps exist.';
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(title: const Text('Your Alignment')),
-      body: Padding(
-        padding: const EdgeInsets.all(24),
-        child: Column(
-          children: [
-            Text(
-              '${average.toStringAsFixed(0)}%',
-              style: const TextStyle(fontSize: 56, fontWeight: FontWeight.bold),
-            ),
-            const SizedBox(height: 20),
-            Text(insight(average), textAlign: TextAlign.center),
-            const SizedBox(height: 30),
-            ElevatedButton(
-              onPressed: () {
-                SharePlus.instance.share(
-                  ShareParams(
-                    text:
-                        'I scored ${average.toStringAsFixed(0)}% on Align. Try it: https://align-app-9fd48.web.app/',
-                  ),
-                );
-              },
-              child: const Text('Share Result'),
-            ),
-            const SizedBox(height: 20),
-            if (kIsWeb)
-              const Text(
-                'Premium is available on the mobile app.',
-                style: TextStyle(fontStyle: FontStyle.italic),
-              )
-            else
-              const UnlockButton(),
-          ],
+      bottomNavigationBar: Padding(
+        padding: const EdgeInsets.all(16),
+        child: ElevatedButton(
+          onPressed: allCompleted
+              ? () {
+                  final total = scores.reduce((a, b) => a + b);
+                  final percentage = (total / 70) * 100;
+                  Navigator.pushReplacement(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) =>
+                          ResultsPage(percentage: percentage, scores: scores),
+                    ),
+                  );
+                }
+              : null,
+          child: Text(
+            allCompleted
+                ? 'See Results'
+                : 'Complete all ${pillars.length} pillars',
+          ),
         ),
       ),
     );
@@ -254,51 +209,95 @@ class ResultsPage extends StatelessWidget {
 }
 
 /// ─────────────────────────────────────────
-/// PAYWALL (MOBILE ONLY)
+/// INSIGHTS
 /// ─────────────────────────────────────────
-class UnlockButton extends StatelessWidget {
-  const UnlockButton({super.key});
+class InsightEngine {
+  static String overall(double score) {
+    if (score >= 85) return 'This relationship is strongly aligned.';
+    if (score >= 70) return 'This relationship is healthy but vulnerable.';
+    if (score >= 55) return 'Alignment is uneven and needs effort.';
+    return 'This relationship faces serious long-term risks.';
+  }
 
-  @override
-  Widget build(BuildContext context) {
-    return ElevatedButton(
-      child: const Text('Unlock Premium'),
-      onPressed: () {
-        Navigator.push(
-          context,
-          MaterialPageRoute(builder: (_) => const PaywallPage()),
-        );
-      },
-    );
+  static String pillar(String name, double value) {
+    if (value >= 8) return '$name is a strong pillar.';
+    if (value >= 6) return '$name is functional but inconsistent.';
+    if (value >= 4) return '$name is unstable.';
+    return '$name is critically weak.';
   }
 }
 
-class PaywallPage extends StatefulWidget {
-  const PaywallPage({super.key});
+/// ─────────────────────────────────────────
+/// RESULTS
+/// ─────────────────────────────────────────
+class ResultsPage extends StatelessWidget {
+  final double percentage;
+  final List<double> scores;
 
-  @override
-  State<PaywallPage> createState() => _PaywallPageState();
-}
+  const ResultsPage({
+    super.key,
+    required this.percentage,
+    required this.scores,
+  });
 
-class _PaywallPageState extends State<PaywallPage> {
-  @override
-  void initState() {
-    super.initState();
-    _init();
-  }
-
-  Future<void> _init() async {
-    const apiKey = kReleaseMode
-        ? 'goog_PpWkcNjCqsaqoAuNHFCzlBuYfkK'
-        : 'test_mIZCjyeqBNBaAtTTrqnBzcwuSeT';
-
-    await Purchases.configure(PurchasesConfiguration(apiKey));
-  }
+  bool get isAndroid => !kIsWeb;
 
   @override
   Widget build(BuildContext context) {
-    return const Scaffold(
-      body: Center(child: Text('Premium purchase handled via Play Store')),
+    final maxScore = scores.reduce((a, b) => a > b ? a : b);
+    final minScore = scores.reduce((a, b) => a < b ? a : b);
+
+    return Scaffold(
+      appBar: AppBar(title: const Text('Your Alignment')),
+      body: Padding(
+        padding: const EdgeInsets.all(24),
+        child: ListView(
+          children: [
+            Text(
+              '${percentage.toStringAsFixed(0)}%',
+              style: const TextStyle(fontSize: 56, fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 16),
+            Text(InsightEngine.overall(percentage)),
+            const SizedBox(height: 24),
+            Text(InsightEngine.pillar(
+              pillars[scores.indexOf(maxScore)],
+              maxScore,
+            )),
+            const SizedBox(height: 12),
+            Text(InsightEngine.pillar(
+              pillars[scores.indexOf(minScore)],
+              minScore,
+            )),
+            const SizedBox(height: 32),
+
+            /// ANDROID = FULL MODE
+            if (isAndroid)
+              ElevatedButton(
+                onPressed: () {
+                  SharePlus.instance.share(
+                    ShareParams(
+                      text:
+                          'I scored ${percentage.toStringAsFixed(0)}% on Align.',
+                    ),
+                  );
+                },
+                child: const Text('Share Result'),
+              ),
+
+            /// WEB = DEMO
+            if (!isAndroid)
+              const Padding(
+                padding: EdgeInsets.only(top: 16),
+                child: Text(
+                  'This is a demo. Full experience available on mobile.',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(fontStyle: FontStyle.italic),
+                ),
+              ),
+          ],
+        ),
+      ),
     );
   }
 }
