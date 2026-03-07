@@ -7,17 +7,19 @@ import 'package:fl_chart/fl_chart.dart';
 // ─────────────────────────────────────────────────────────────────────────────
 // DESIGN TOKENS
 // ─────────────────────────────────────────────────────────────────────────────
-const kBrand = Color(0xFF8F9B8B);
-const kBrandDark = Color(0xFF6B7A67);
-const kBackground = Color(0xFFF8F7F4);
+// Extracted directly from the Align logo
+const kBrand = Color(0xFF00897B); // bold jewel teal — loud and confident
+const kBrandDark = Color(0xFF00695C); // deep teal for pressed/dark states
+const kBrandLight = Color(0xFFD6F5F0); // light teal tint for card fills
+const kBackground = Color(0xFFF0F7F6); // soft teal-white — warmer and deeper
 const kSurface = Color(0xFFFFFFFF);
-const kBorder = Color(0xFFE8E7E2);
-const kTextPrimary = Color(0xFF1A1A18);
-const kTextSub = Color(0xFF888884);
-const kScoreGreen = Color(0xFF4CAF50);
-const kScoreAmber = Color(0xFFFF9800);
-const kScoreRed = Color(0xFFE53935);
-const kPremiumGold = Color(0xFFC9A84C);
+const kBorder = Color(0xFFBEE3DC); // teal-tinted border
+const kTextPrimary = Color(0xFF0A1F1D); // near-black with teal undertone
+const kTextSub = Color(0xFF4A7A74); // muted teal-grey
+const kScoreGreen = Color(0xFF00897B); // matches brand for high scores
+const kScoreAmber = Color(0xFFE09A2B); // warm amber
+const kScoreRed = Color(0xFFD94F3D); // warm red
+const kPremiumGold = Color(0xFFC9A84C); // gold for premium
 
 // ─────────────────────────────────────────────────────────────────────────────
 // REUSABLE WIDGETS
@@ -98,19 +100,22 @@ class AlignButton extends StatelessWidget {
         ? Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(icon, size: 18),
+              Icon(icon, size: 19),
               const SizedBox(width: 8),
-              Text(label, style: const TextStyle(fontSize: 16)),
+              Text(label,
+                  style: const TextStyle(
+                      fontSize: 16, fontWeight: FontWeight.w700)),
             ],
           )
-        : Text(label, style: const TextStyle(fontSize: 16));
+        : Text(label,
+            style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700));
 
     if (outline) {
       return OutlinedButton(
         onPressed: onPressed,
         style: OutlinedButton.styleFrom(
           foregroundColor: kBrand,
-          side: const BorderSide(color: kBrand),
+          side: const BorderSide(color: kBrand, width: 1.8),
           padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 16),
           shape:
               RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
@@ -124,8 +129,9 @@ class AlignButton extends StatelessWidget {
       style: ElevatedButton.styleFrom(
         backgroundColor: kBrand,
         foregroundColor: kSurface,
-        elevation: 0,
-        padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 16),
+        elevation: 2,
+        shadowColor: kBrand.withValues(alpha: 0.4),
+        padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 18),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       ),
       child: content,
@@ -154,13 +160,14 @@ class AlignApp extends StatelessWidget {
         scaffoldBackgroundColor: kBackground,
         useMaterial3: true,
         appBarTheme: const AppBarTheme(
-          backgroundColor: kBackground,
+          backgroundColor: kSurface,
           surfaceTintColor: Colors.transparent,
           elevation: 0,
+          shadowColor: Colors.transparent,
           titleTextStyle: TextStyle(
             color: kTextPrimary,
-            fontSize: 18,
-            fontWeight: FontWeight.w600,
+            fontSize: 17,
+            fontWeight: FontWeight.w700,
           ),
           iconTheme: IconThemeData(color: kTextPrimary),
         ),
@@ -183,37 +190,27 @@ class OnboardingPage extends StatelessWidget {
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 32),
           child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+            crossAxisAlignment: CrossAxisAlignment.center,
             children: [
               const Spacer(),
-              Container(
-                width: 52,
-                height: 52,
-                decoration: BoxDecoration(
-                  color: kBrand,
-                  borderRadius: BorderRadius.circular(14),
-                ),
-                child: const Icon(Icons.favorite_rounded,
-                    color: kSurface, size: 28),
-              ),
-              const SizedBox(height: 24),
-              const Text(
-                'Align',
-                style: TextStyle(
-                  fontSize: 42,
-                  fontWeight: FontWeight.w800,
-                  color: kTextPrimary,
-                  letterSpacing: -1,
+
+              // ── LOGO ───────────────────────────────────────────────────
+              Center(
+                child: Image.asset(
+                  'assets/images/Align-Logo.png',
+                  height: 180,
+                  fit: BoxFit.contain,
                 ),
               ),
-              const SizedBox(height: 12),
+              const SizedBox(height: 16),
               const Text(
                 'Understand how well your relationship\nis truly aligned — across every dimension that matters.',
-                style: TextStyle(fontSize: 18, color: kTextSub, height: 1.5),
+                textAlign: TextAlign.center,
+                style: TextStyle(fontSize: 17, color: kTextSub, height: 1.5),
               ),
               const Spacer(),
               const AlignCard(
-                color: Color(0xFFF3F2EE),
+                color: kBrandLight,
                 padding: EdgeInsets.all(16),
                 child: Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -280,7 +277,18 @@ class LensSelectionPage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(),
+      appBar: AppBar(
+        title: Row(
+          children: [
+            Image.asset('assets/images/Align-Logo.png',
+                height: 30, fit: BoxFit.contain),
+            const SizedBox(width: 8),
+            const Text('Align',
+                style: TextStyle(
+                    color: kBrand, fontSize: 18, fontWeight: FontWeight.w800)),
+          ],
+        ),
+      ),
       body: SafeArea(
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 8),
@@ -453,7 +461,16 @@ class _AssessmentPageState extends State<AssessmentPage> {
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Assessment'),
+        title: Row(
+          children: [
+            Image.asset('assets/images/Align-Logo.png',
+                height: 30, fit: BoxFit.contain),
+            const SizedBox(width: 8),
+            const Text('Align',
+                style: TextStyle(
+                    color: kBrand, fontSize: 18, fontWeight: FontWeight.w800)),
+          ],
+        ),
         bottom: PreferredSize(
           preferredSize: const Size.fromHeight(12),
           child: Padding(
@@ -785,13 +802,26 @@ class _ResultsPageState extends State<ResultsPage> {
     final minScore = widget.scores.reduce((a, b) => a < b ? a : b);
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Your Alignment')),
+      appBar: AppBar(
+        title: Row(
+          children: [
+            Image.asset('assets/images/Align-Logo.png',
+                height: 30, fit: BoxFit.contain),
+            const SizedBox(width: 8),
+            const Text('Align',
+                style: TextStyle(
+                    color: kBrand, fontSize: 18, fontWeight: FontWeight.w800)),
+          ],
+        ),
+      ),
       body: ListView(
         padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
         children: [
           // ── SCORE HERO CARD ─────────────────────────────────────────
           AlignCard(
-            color: gradeColor.withValues(alpha: 0.06),
+            color: gradeColor == kScoreGreen
+                ? kBrandLight
+                : gradeColor.withValues(alpha: 0.06),
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.center,
               children: [
@@ -821,17 +851,24 @@ class _ResultsPageState extends State<ResultsPage> {
                 Column(
                   children: [
                     Container(
-                      width: 56,
-                      height: 56,
+                      width: 68,
+                      height: 68,
                       decoration: BoxDecoration(
                         color: gradeColor,
-                        borderRadius: BorderRadius.circular(16),
+                        borderRadius: BorderRadius.circular(18),
+                        boxShadow: [
+                          BoxShadow(
+                            color: gradeColor.withValues(alpha: 0.4),
+                            blurRadius: 12,
+                            offset: const Offset(0, 4),
+                          ),
+                        ],
                       ),
                       child: Center(
                         child: Text(
                           grade,
                           style: const TextStyle(
-                            fontSize: 28,
+                            fontSize: 32,
                             fontWeight: FontWeight.w800,
                             color: kSurface,
                           ),
@@ -1021,7 +1058,6 @@ class _ResultsPageState extends State<ResultsPage> {
             width: double.infinity,
             child: AlignButton(
               label: 'Share My Result',
-              outline: true,
               icon: Icons.share_rounded,
               onPressed: () {
                 SharePlus.instance.share(
