@@ -1,25 +1,38 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/foundation.dart' show kDebugMode;
+import 'package:flutter/foundation.dart' show kDebugMode, kReleaseMode;
 import 'package:share_plus/share_plus.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 import 'package:fl_chart/fl_chart.dart';
+import 'package:purchases_flutter/purchases_flutter.dart';
+import 'package:flutter_native_splash/flutter_native_splash.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // DESIGN TOKENS
 // ─────────────────────────────────────────────────────────────────────────────
-// Extracted directly from the Align logo
-const kBrand = Color(0xFF00897B); // bold jewel teal — loud and confident
-const kBrandDark = Color(0xFF00695C); // deep teal for pressed/dark states
-const kBrandLight = Color(0xFFD6F5F0); // light teal tint for card fills
-const kBackground = Color(0xFFF0F7F6); // soft teal-white — warmer and deeper
+const kBrand = Color(0xFF00897B);
+const kBrandDark = Color(0xFF00695C);
+const kBrandLight = Color(0xFFD6F5F0);
+const kBackground = Color(0xFFF0F7F6);
 const kSurface = Color(0xFFFFFFFF);
-const kBorder = Color(0xFFBEE3DC); // teal-tinted border
-const kTextPrimary = Color(0xFF0A1F1D); // near-black with teal undertone
-const kTextSub = Color(0xFF4A7A74); // muted teal-grey
-const kScoreGreen = Color(0xFF00897B); // matches brand for high scores
-const kScoreAmber = Color(0xFFE09A2B); // warm amber
-const kScoreRed = Color(0xFFD94F3D); // warm red
-const kPremiumGold = Color(0xFFC9A84C); // gold for premium
+const kBorder = Color(0xFFBEE3DC);
+const kTextPrimary = Color(0xFF0A1F1D);
+const kTextSub = Color(0xFF4A7A74);
+const kScoreGreen = Color(0xFF00897B);
+const kScoreAmber = Color(0xFFE09A2B);
+const kScoreRed = Color(0xFFD94F3D);
+const kPremiumGold = Color(0xFFC9A84C);
+
+// Lens colours for the progress graph
+const kLensUniversal = Color(0xFF00897B); // same as kBrand — teal
+const kLensFeminine = Color(0xFF9B59A0); // muted purple — cool, cohesive
+const kLensMasculine =
+    Color(0xFF2E7D9F); // deep teal-blue — same family as kBrand
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SUPABASE CONFIG
+// ─────────────────────────────────────────────────────────────────────────────
+const kSupabaseUrl = 'https://cebfleqyaqolpfeismlf.supabase.co';
+const kSupabaseAnonKey = 'sb_publishable_i5UtYQMvrtKb19IUyq-vlg_KuAf0KF7';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // REUSABLE WIDGETS
@@ -142,14 +155,24 @@ class AlignButton extends StatelessWidget {
 // ─────────────────────────────────────────────────────────────────────────────
 // APP ROOT
 // ─────────────────────────────────────────────────────────────────────────────
-void main() {
-  WidgetsFlutterBinding.ensureInitialized();
+void main() async {
+  WidgetsBinding widgetsBinding = WidgetsFlutterBinding.ensureInitialized();
+  FlutterNativeSplash.preserve(widgetsBinding: widgetsBinding);
+  PremiumService.init().catchError((_) {});
   runApp(const AlignApp());
 }
 
-class AlignApp extends StatelessWidget {
+// Supabase client — safe getter
+SupabaseClient get supabase => Supabase.instance.client;
+
+class AlignApp extends StatefulWidget {
   const AlignApp({super.key});
 
+  @override
+  State<AlignApp> createState() => _AlignAppState();
+}
+
+class _AlignAppState extends State<AlignApp> {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
@@ -178,10 +201,141 @@ class AlignApp extends StatelessWidget {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// AUTH SERVICE
+// ─────────────────────────────────────────────────────────────────────────────
+class AuthService {
+  static User? get currentUser {
+    try {
+      return supabase.auth.currentUser;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  static bool get isSignedIn => currentUser != null;
+
+  static Future<AuthResponse?> signUp(String email, String password) async {
+    try {
+      final response = await supabase.auth.signUp(
+        email: email,
+        password: password,
+      );
+      return response;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  static Future<AuthResponse?> signIn(String email, String password) async {
+    try {
+      final response = await supabase.auth.signInWithPassword(
+        email: email,
+        password: password,
+      );
+      return response;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  static Future<void> signOut() async {
+    await supabase.auth.signOut();
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ASSESSMENT SERVICE — Supabase
+// ─────────────────────────────────────────────────────────────────────────────
+class AssessmentService {
+  static Future<bool> save({
+    required String lens,
+    required List<double> scores,
+    required double overallScore,
+    required String grade,
+  }) async {
+    if (!AuthService.isSignedIn) return false;
+    try {
+      Supabase.instance.client;
+      await supabase.from('assessments').insert({
+        'user_id': AuthService.currentUser!.id,
+        'lens': lens,
+        'scores': scores,
+        'overall_score': overallScore,
+        'grade': grade,
+      });
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  static Future<List<Map<String, dynamic>>> getHistory() async {
+    if (!AuthService.isSignedIn) return [];
+    try {
+      final data = await supabase
+          .from('assessments')
+          .select()
+          .eq('user_id', AuthService.currentUser!.id)
+          .order('created_at', ascending: false);
+      return List<Map<String, dynamic>>.from(data);
+    } catch (_) {
+      return [];
+    }
+  }
+
+  static Future<bool> delete(String id) async {
+    try {
+      await supabase.from('assessments').delete().eq('id', id);
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // ONBOARDING
 // ─────────────────────────────────────────────────────────────────────────────
-class OnboardingPage extends StatelessWidget {
+class OnboardingPage extends StatefulWidget {
   const OnboardingPage({super.key});
+
+  @override
+  State<OnboardingPage> createState() => _OnboardingPageState();
+}
+
+class _OnboardingPageState extends State<OnboardingPage> {
+  bool _supabaseReady = false;
+
+  @override
+  void initState() {
+    super.initState();
+    FlutterNativeSplash.remove();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _initSupabase();
+    });
+  }
+
+  Future<void> _initSupabase() async {
+    try {
+      await Supabase.initialize(
+        url: kSupabaseUrl,
+        anonKey: kSupabaseAnonKey,
+        authOptions: const FlutterAuthClientOptions(
+          authFlowType: AuthFlowType.pkce,
+        ),
+      );
+      if (mounted) {
+        setState(() => _supabaseReady = true);
+        supabase.auth.onAuthStateChange.listen((data) {
+          if (mounted) setState(() {});
+        });
+      }
+    } catch (_) {
+      if (mounted) {
+        setState(() => _supabaseReady = true);
+      }
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -193,12 +347,10 @@ class OnboardingPage extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.center,
             children: [
               const Spacer(),
-
-              // ── LOGO ───────────────────────────────────────────────────
               Center(
                 child: Image.asset(
                   'assets/images/Align-Logo.png',
-                  height: 180,
+                  height: 220,
                   fit: BoxFit.contain,
                 ),
               ),
@@ -243,6 +395,79 @@ class OnboardingPage extends StatelessWidget {
                   ),
                 ),
               ),
+              const SizedBox(height: 12),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  if (_supabaseReady && AuthService.isSignedIn) ...[
+                    TextButton.icon(
+                      onPressed: () => Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                            builder: (_) => const AssessmentHistoryPage()),
+                      ),
+                      icon: const Icon(Icons.history_rounded,
+                          size: 16, color: kBrand),
+                      label: const Text('My History',
+                          style: TextStyle(fontSize: 13, color: kBrand)),
+                    ),
+                    const Text('·',
+                        style: TextStyle(fontSize: 12, color: kTextSub)),
+                    TextButton(
+                      onPressed: () async {
+                        await AuthService.signOut();
+                        setState(() {});
+                      },
+                      child: const Text('Sign Out',
+                          style: TextStyle(fontSize: 13, color: kTextSub)),
+                    ),
+                  ] else if (_supabaseReady) ...[
+                    TextButton(
+                      onPressed: () async {
+                        final result = await Navigator.push<bool>(
+                          context,
+                          MaterialPageRoute(builder: (_) => const AuthPage()),
+                        );
+                        if (result == true) setState(() {});
+                      },
+                      child: const Text(
+                        'Sign in to save your history',
+                        style: TextStyle(fontSize: 13, color: kBrand),
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+              const SizedBox(height: 4),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  TextButton(
+                    onPressed: () => Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                          builder: (_) => const PrivacyPolicyPage()),
+                    ),
+                    child: const Text(
+                      'Privacy Policy',
+                      style: TextStyle(fontSize: 12, color: kTextSub),
+                    ),
+                  ),
+                  const Text('·',
+                      style: TextStyle(fontSize: 12, color: kTextSub)),
+                  TextButton(
+                    onPressed: () => Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                          builder: (_) => const TermsOfServicePage()),
+                    ),
+                    child: const Text(
+                      'Terms of Service',
+                      style: TextStyle(fontSize: 12, color: kTextSub),
+                    ),
+                  ),
+                ],
+              ),
               const SizedBox(height: 8),
             ],
           ),
@@ -250,6 +475,1575 @@ class OnboardingPage extends StatelessWidget {
       ),
     );
   }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// AUTH PAGE — Sign In / Sign Up
+// ─────────────────────────────────────────────────────────────────────────────
+class AuthPage extends StatefulWidget {
+  const AuthPage({super.key});
+
+  @override
+  State<AuthPage> createState() => _AuthPageState();
+}
+
+class _AuthPageState extends State<AuthPage> {
+  bool _isSignIn = true;
+  bool _loading = false;
+  bool _obscurePassword = true;
+  final _emailController = TextEditingController();
+  final _passwordController = TextEditingController();
+  String? _errorMessage;
+
+  @override
+  void dispose() {
+    _emailController.dispose();
+    _passwordController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _submit() async {
+    final email = _emailController.text.trim();
+    final password = _passwordController.text.trim();
+
+    if (email.isEmpty || password.isEmpty) {
+      setState(() => _errorMessage = 'Please enter your email and password.');
+      return;
+    }
+
+    setState(() {
+      _loading = true;
+      _errorMessage = null;
+    });
+
+    try {
+      if (_isSignIn) {
+        final response = await supabase.auth.signInWithPassword(
+          email: email,
+          password: password,
+        );
+        if (response.user != null && mounted) {
+          Navigator.pop(context, true);
+        } else {
+          setState(() =>
+              _errorMessage = 'Sign in failed. Please check your details.');
+        }
+      } else {
+        final response = await supabase.auth.signUp(
+          email: email,
+          password: password,
+        );
+        if (response.user != null && mounted) {
+          if (response.session == null) {
+            setState(() {
+              _loading = false;
+              _errorMessage = null;
+            });
+            if (mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text(
+                      'Account created! Please check your email to confirm your account, then sign in.'),
+                  backgroundColor: kBrand,
+                  duration: Duration(seconds: 5),
+                ),
+              );
+              setState(() => _isSignIn = true);
+            }
+            return;
+          }
+          Navigator.pop(context, true);
+        } else {
+          setState(() => _errorMessage =
+              'Sign up failed. This email may already be registered.');
+        }
+      }
+    } catch (e) {
+      setState(() => _errorMessage = 'Something went wrong. Please try again.');
+    }
+
+    setState(() => _loading = false);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: Row(
+          children: [
+            Image.asset('assets/images/Align-Logo.png',
+                height: 30, fit: BoxFit.contain),
+            const SizedBox(width: 8),
+            const Text('Align',
+                style: TextStyle(
+                    color: kBrand, fontSize: 18, fontWeight: FontWeight.w800)),
+          ],
+        ),
+      ),
+      body: SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 24),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                _isSignIn ? 'Welcome back' : 'Create account',
+                style: const TextStyle(
+                  fontSize: 26,
+                  fontWeight: FontWeight.w800,
+                  color: kTextPrimary,
+                  letterSpacing: -0.5,
+                ),
+              ),
+              const SizedBox(height: 6),
+              Text(
+                _isSignIn
+                    ? 'Sign in to access your assessment history.'
+                    : 'Save your assessments and track progress over time.',
+                style:
+                    const TextStyle(fontSize: 14, color: kTextSub, height: 1.5),
+              ),
+              const SizedBox(height: 32),
+              TextField(
+                controller: _emailController,
+                keyboardType: TextInputType.emailAddress,
+                autocorrect: false,
+                decoration: InputDecoration(
+                  labelText: 'Email',
+                  labelStyle: const TextStyle(color: kTextSub),
+                  filled: true,
+                  fillColor: kSurface,
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: const BorderSide(color: kBorder),
+                  ),
+                  enabledBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: const BorderSide(color: kBorder),
+                  ),
+                  focusedBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: const BorderSide(color: kBrand, width: 2),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 14),
+              TextField(
+                controller: _passwordController,
+                obscureText: _obscurePassword,
+                decoration: InputDecoration(
+                  labelText: 'Password',
+                  labelStyle: const TextStyle(color: kTextSub),
+                  filled: true,
+                  fillColor: kSurface,
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: const BorderSide(color: kBorder),
+                  ),
+                  enabledBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: const BorderSide(color: kBorder),
+                  ),
+                  focusedBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: const BorderSide(color: kBrand, width: 2),
+                  ),
+                  suffixIcon: IconButton(
+                    icon: Icon(
+                      _obscurePassword
+                          ? Icons.visibility_off_outlined
+                          : Icons.visibility_outlined,
+                      color: kTextSub,
+                    ),
+                    onPressed: () =>
+                        setState(() => _obscurePassword = !_obscurePassword),
+                  ),
+                ),
+              ),
+              if (_errorMessage != null) ...[
+                const SizedBox(height: 12),
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: kScoreRed.withValues(alpha: 0.08),
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(color: kScoreRed.withValues(alpha: 0.3)),
+                  ),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.error_outline_rounded,
+                          color: kScoreRed, size: 16),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          _errorMessage!,
+                          style:
+                              const TextStyle(fontSize: 13, color: kScoreRed),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+              const SizedBox(height: 24),
+              SizedBox(
+                width: double.infinity,
+                child: AlignButton(
+                  label: _loading
+                      ? 'Please wait...'
+                      : (_isSignIn ? 'Sign In' : 'Create Account'),
+                  onPressed: _loading ? null : _submit,
+                ),
+              ),
+              const SizedBox(height: 16),
+              Center(
+                child: TextButton(
+                  onPressed: () => setState(() {
+                    _isSignIn = !_isSignIn;
+                    _errorMessage = null;
+                  }),
+                  child: Text(
+                    _isSignIn
+                        ? "Don't have an account? Sign up"
+                        : 'Already have an account? Sign in',
+                    style: const TextStyle(fontSize: 13, color: kBrand),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ASSESSMENT HISTORY PAGE
+// ─────────────────────────────────────────────────────────────────────────────
+class AssessmentHistoryPage extends StatefulWidget {
+  const AssessmentHistoryPage({super.key});
+
+  @override
+  State<AssessmentHistoryPage> createState() => _AssessmentHistoryPageState();
+}
+
+class _AssessmentHistoryPageState extends State<AssessmentHistoryPage> {
+  List<Map<String, dynamic>> _history = [];
+  bool _loading = true;
+  bool _isPremium = false;
+
+  // Selection mode state
+  bool _selectionMode = false;
+  final Set<String> _selectedIds = {};
+
+  @override
+  void initState() {
+    super.initState();
+    _loadHistory();
+    _checkPremium();
+  }
+
+  Future<void> _checkPremium() async {
+    if (kDebugMode) {
+      setState(() => _isPremium = true);
+      return;
+    }
+    final premium = await PremiumService.isPremium()
+        .timeout(const Duration(seconds: 5), onTimeout: () => false);
+    setState(() => _isPremium = premium);
+  }
+
+  Future<void> _loadHistory() async {
+    final data = await AssessmentService.getHistory();
+    setState(() {
+      _history = data;
+      _loading = false;
+    });
+  }
+
+  Future<void> _delete(String id) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Text('Delete Assessment',
+            style: TextStyle(
+                fontSize: 17,
+                fontWeight: FontWeight.w700,
+                color: kTextPrimary)),
+        content: const Text(
+            'Are you sure you want to delete this assessment? This cannot be undone.',
+            style: TextStyle(fontSize: 14, color: kTextSub)),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel', style: TextStyle(color: kTextSub)),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Delete', style: TextStyle(color: kScoreRed)),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true) {
+      await AssessmentService.delete(id);
+      _loadHistory();
+    }
+  }
+
+  void _enterSelectionMode(String id) {
+    setState(() {
+      _selectionMode = true;
+      _selectedIds.add(id);
+    });
+  }
+
+  void _exitSelectionMode() {
+    setState(() {
+      _selectionMode = false;
+      _selectedIds.clear();
+    });
+  }
+
+  void _toggleSelection(String id) {
+    setState(() {
+      if (_selectedIds.contains(id)) {
+        _selectedIds.remove(id);
+        if (_selectedIds.isEmpty) _selectionMode = false;
+      } else {
+        _selectedIds.add(id);
+      }
+    });
+  }
+
+  void _plotSelected() {
+    final selected = _history
+        .where((item) => _selectedIds.contains(item['id'] as String))
+        .toList();
+    _exitSelectionMode();
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => ProgressGraphPage(
+          history: _history,
+          customSelection: selected,
+          initialTab: GraphTab.custom,
+        ),
+      ),
+    );
+  }
+
+  Color _gradeColor(String grade) {
+    switch (grade) {
+      case 'A':
+      case 'B':
+        return kScoreGreen;
+      case 'C':
+      case 'D':
+        return kScoreAmber;
+      default:
+        return kScoreRed;
+    }
+  }
+
+  String _formatDate(String isoDate) {
+    final dt = DateTime.parse(isoDate).toLocal();
+    const months = [
+      'Jan',
+      'Feb',
+      'Mar',
+      'Apr',
+      'May',
+      'Jun',
+      'Jul',
+      'Aug',
+      'Sep',
+      'Oct',
+      'Nov',
+      'Dec'
+    ];
+    return '${dt.day} ${months[dt.month - 1]} ${dt.year}';
+  }
+
+  String _lensLabel(String lens) {
+    switch (lens) {
+      case 'feminine':
+        return 'Feminine Lens';
+      case 'masculine':
+        return 'Masculine Lens';
+      default:
+        return 'Universal Lens';
+    }
+  }
+
+  Color _lensColor(String lens) {
+    switch (lens) {
+      case 'feminine':
+        return kLensFeminine;
+      case 'masculine':
+        return kLensMasculine;
+      default:
+        return kLensUniversal;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return PopScope(
+      canPop: !_selectionMode,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop && _selectionMode) {
+          _exitSelectionMode();
+        }
+      },
+      child: Scaffold(
+        appBar: AppBar(
+          title: Row(
+            children: [
+              Image.asset('assets/images/Align-Logo.png',
+                  height: 30, fit: BoxFit.contain),
+              const SizedBox(width: 8),
+              const Text('Align',
+                  style: TextStyle(
+                      color: kBrand,
+                      fontSize: 18,
+                      fontWeight: FontWeight.w800)),
+            ],
+          ),
+          actions: [
+            // View Progress button — only shown for premium users with 2+ assessments
+            if (_isPremium && _history.length >= 2 && !_selectionMode)
+              TextButton.icon(
+                onPressed: () => Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => ProgressGraphPage(
+                      history: _history,
+                      customSelection: const [],
+                      initialTab: GraphTab.day,
+                    ),
+                  ),
+                ),
+                icon: const Icon(Icons.show_chart_rounded,
+                    size: 16, color: kBrand),
+                label: const Text('Progress',
+                    style: TextStyle(fontSize: 13, color: kBrand)),
+              ),
+            if (_selectionMode)
+              TextButton(
+                onPressed: _exitSelectionMode,
+                child: const Text('Cancel',
+                    style: TextStyle(fontSize: 13, color: kTextSub)),
+              ),
+          ],
+        ),
+        body: _loading
+            ? const Center(child: CircularProgressIndicator(color: kBrand))
+            : _history.isEmpty
+                ? Center(
+                    child: Padding(
+                      padding: const EdgeInsets.all(40),
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(Icons.history_rounded,
+                              size: 56, color: kBrand.withValues(alpha: 0.3)),
+                          const SizedBox(height: 16),
+                          const Text(
+                            'No assessments yet',
+                            style: TextStyle(
+                                fontSize: 18,
+                                fontWeight: FontWeight.w700,
+                                color: kTextPrimary),
+                          ),
+                          const SizedBox(height: 8),
+                          const Text(
+                            'Complete an assessment and your results will be saved here.',
+                            textAlign: TextAlign.center,
+                            style: TextStyle(
+                                fontSize: 14, color: kTextSub, height: 1.5),
+                          ),
+                        ],
+                      ),
+                    ),
+                  )
+                : Stack(
+                    children: [
+                      RefreshIndicator(
+                        color: kBrand,
+                        onRefresh: _loadHistory,
+                        child: ListView.builder(
+                          padding: EdgeInsets.fromLTRB(
+                            20,
+                            16,
+                            20,
+                            _selectionMode ? 100 : 32,
+                          ),
+                          itemCount: _history.length,
+                          itemBuilder: (context, i) {
+                            final item = _history[i];
+                            final grade = item['grade'] as String;
+                            final score =
+                                (item['overall_score'] as num).toDouble();
+                            final lens = item['lens'] as String;
+                            final date = item['created_at'] as String;
+                            final id = item['id'] as String;
+                            final gradeCol = _gradeColor(grade);
+                            final isSelected = _selectedIds.contains(id);
+
+                            return Padding(
+                              padding: const EdgeInsets.only(bottom: 8),
+                              child: GestureDetector(
+                                onLongPress: () {
+                                  if (!_selectionMode) {
+                                    _enterSelectionMode(id);
+                                  }
+                                },
+                                onTap: () {
+                                  if (_selectionMode) {
+                                    _toggleSelection(id);
+                                  }
+                                },
+                                child: AnimatedContainer(
+                                  duration: const Duration(milliseconds: 180),
+                                  decoration: BoxDecoration(
+                                    color: isSelected
+                                        ? kBrand.withValues(alpha: 0.07)
+                                        : kSurface,
+                                    borderRadius: BorderRadius.circular(16),
+                                    border: Border.all(
+                                      color: isSelected ? kBrand : kBorder,
+                                      width: isSelected ? 2 : 1,
+                                    ),
+                                    boxShadow: [
+                                      BoxShadow(
+                                        color: Colors.black
+                                            .withValues(alpha: 0.04),
+                                        blurRadius: 8,
+                                        offset: const Offset(0, 2),
+                                      ),
+                                    ],
+                                  ),
+                                  padding: const EdgeInsets.symmetric(
+                                      horizontal: 14, vertical: 10),
+                                  child: Row(
+                                    children: [
+                                      // Selection checkbox overlay
+                                      if (_selectionMode) ...[
+                                        AnimatedContainer(
+                                          duration:
+                                              const Duration(milliseconds: 150),
+                                          width: 24,
+                                          height: 24,
+                                          margin:
+                                              const EdgeInsets.only(right: 10),
+                                          decoration: BoxDecoration(
+                                            shape: BoxShape.circle,
+                                            color: isSelected
+                                                ? kBrand
+                                                : Colors.transparent,
+                                            border: Border.all(
+                                              color: isSelected
+                                                  ? kBrand
+                                                  : kTextSub,
+                                              width: 2,
+                                            ),
+                                          ),
+                                          child: isSelected
+                                              ? const Icon(Icons.check,
+                                                  size: 14, color: kSurface)
+                                              : null,
+                                        ),
+                                      ],
+                                      // Grade badge
+                                      Container(
+                                        width: 42,
+                                        height: 42,
+                                        decoration: BoxDecoration(
+                                          color: gradeCol,
+                                          borderRadius:
+                                              BorderRadius.circular(12),
+                                          boxShadow: [
+                                            BoxShadow(
+                                              color: gradeCol.withValues(
+                                                  alpha: 0.3),
+                                              blurRadius: 6,
+                                              offset: const Offset(0, 2),
+                                            ),
+                                          ],
+                                        ),
+                                        child: Center(
+                                          child: Text(
+                                            grade,
+                                            style: const TextStyle(
+                                              fontSize: 20,
+                                              fontWeight: FontWeight.w800,
+                                              color: kSurface,
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                                      const SizedBox(width: 12),
+                                      Expanded(
+                                        child: Column(
+                                          crossAxisAlignment:
+                                              CrossAxisAlignment.start,
+                                          children: [
+                                            Text(
+                                              '${score.toStringAsFixed(0)}%',
+                                              style: const TextStyle(
+                                                fontSize: 14,
+                                                fontWeight: FontWeight.w700,
+                                                color: kTextPrimary,
+                                              ),
+                                            ),
+                                            const SizedBox(height: 2),
+                                            Row(
+                                              children: [
+                                                Container(
+                                                  width: 8,
+                                                  height: 8,
+                                                  decoration: BoxDecoration(
+                                                    color: _lensColor(lens),
+                                                    shape: BoxShape.circle,
+                                                  ),
+                                                ),
+                                                const SizedBox(width: 5),
+                                                Text(
+                                                  _lensLabel(lens),
+                                                  style: TextStyle(
+                                                    fontSize: 11,
+                                                    color: _lensColor(lens),
+                                                    fontWeight: FontWeight.w600,
+                                                  ),
+                                                ),
+                                                const SizedBox(width: 8),
+                                                Text(
+                                                  _formatDate(date),
+                                                  style: const TextStyle(
+                                                      fontSize: 11,
+                                                      color: kTextSub),
+                                                ),
+                                              ],
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                      if (!_selectionMode)
+                                        IconButton(
+                                          onPressed: () => _delete(id),
+                                          padding: EdgeInsets.zero,
+                                          constraints: const BoxConstraints(),
+                                          icon: const Icon(
+                                              Icons.delete_outline_rounded,
+                                              color: kTextSub,
+                                              size: 18),
+                                        ),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                            );
+                          },
+                        ),
+                      ),
+
+                      // ── SELECTION MODE BOTTOM BAR ──────────────────────────
+                      if (_selectionMode)
+                        Positioned(
+                          left: 0,
+                          right: 0,
+                          bottom: 0,
+                          child: Container(
+                            padding: const EdgeInsets.fromLTRB(20, 12, 20, 28),
+                            decoration: BoxDecoration(
+                              color: kSurface,
+                              border:
+                                  const Border(top: BorderSide(color: kBorder)),
+                              boxShadow: [
+                                BoxShadow(
+                                  color: Colors.black.withValues(alpha: 0.08),
+                                  blurRadius: 12,
+                                  offset: const Offset(0, -2),
+                                ),
+                              ],
+                            ),
+                            child: Row(
+                              children: [
+                                Expanded(
+                                  child: Text(
+                                    '${_selectedIds.length} selected',
+                                    style: const TextStyle(
+                                      fontSize: 14,
+                                      fontWeight: FontWeight.w600,
+                                      color: kTextPrimary,
+                                    ),
+                                  ),
+                                ),
+                                AlignButton(
+                                  label: 'Plot Selected',
+                                  icon: Icons.show_chart_rounded,
+                                  onPressed: _selectedIds.length >= 2
+                                      ? _plotSelected
+                                      : null,
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+      ),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PROGRESS GRAPH PAGE
+// ─────────────────────────────────────────────────────────────────────────────
+
+enum GraphTab { day, week, month, year, custom }
+
+class ProgressGraphPage extends StatefulWidget {
+  final List<Map<String, dynamic>> history;
+  final List<Map<String, dynamic>> customSelection;
+  final GraphTab initialTab;
+
+  const ProgressGraphPage({
+    super.key,
+    required this.history,
+    required this.customSelection,
+    required this.initialTab,
+  });
+
+  @override
+  State<ProgressGraphPage> createState() => _ProgressGraphPageState();
+}
+
+class _ProgressGraphPageState extends State<ProgressGraphPage> {
+  late GraphTab _activeTab;
+
+  static const _monthLabels = [
+    'Jan',
+    'Feb',
+    'Mar',
+    'Apr',
+    'May',
+    'Jun',
+    'Jul',
+    'Aug',
+    'Sep',
+    'Oct',
+    'Nov',
+    'Dec'
+  ];
+
+  @override
+  void initState() {
+    super.initState();
+    _activeTab = widget.initialTab;
+  }
+
+  // ── DATA HELPERS ─────────────────────────────────────────────────────────
+
+  bool _tabEnabled(GraphTab tab) {
+    if (tab == GraphTab.custom) return widget.customSelection.length >= 2;
+    final buckets = _buildBuckets(tab);
+    for (final lensData in buckets.values) {
+      if (lensData.length >= 2) return true;
+    }
+    return false;
+  }
+
+  Map<String, List<_BucketPoint>> _buildBuckets(GraphTab tab) {
+    final Map<String, Map<String, List<double>>> grouped = {
+      'universal': {},
+      'feminine': {},
+      'masculine': {},
+    };
+    final source = widget.history.reversed.toList();
+    for (final item in source) {
+      final lens = item['lens'] as String;
+      if (!grouped.containsKey(lens)) continue;
+      final score = (item['overall_score'] as num).toDouble();
+      final dt = DateTime.parse(item['created_at'] as String).toLocal();
+      final key = _bucketKey(dt, tab);
+      grouped[lens]!.putIfAbsent(key, () => []).add(score);
+    }
+    final Map<String, List<_BucketPoint>> result = {};
+    for (final lens in grouped.keys) {
+      final bucketMap = grouped[lens]!;
+      final points = bucketMap.entries.map((e) {
+        final avg = e.value.reduce((a, b) => a + b) / e.value.length;
+        return _BucketPoint(key: e.key, avg: avg, count: e.value.length);
+      }).toList();
+      points.sort((a, b) => a.key.compareTo(b.key));
+      result[lens] = points;
+    }
+    return result;
+  }
+
+  String _bucketKey(DateTime dt, GraphTab tab) {
+    switch (tab) {
+      case GraphTab.day:
+        return '${dt.year}-${dt.month.toString().padLeft(2, '0')}-${dt.day.toString().padLeft(2, '0')}';
+      case GraphTab.week:
+        final startOfYear = DateTime(dt.year, 1, 1);
+        final weekNum = ((dt.difference(startOfYear).inDays) / 7).ceil();
+        return '${dt.year}-W${weekNum.toString().padLeft(2, '0')}';
+      case GraphTab.month:
+        return '${dt.year}-${dt.month.toString().padLeft(2, '0')}';
+      case GraphTab.year:
+        return '${dt.year}';
+      case GraphTab.custom:
+        return '';
+    }
+  }
+
+  String _bucketLabel(String key, GraphTab tab, {bool short = false}) {
+    try {
+      switch (tab) {
+        case GraphTab.day:
+          final dt = DateTime.parse(key);
+          return short
+              ? '${dt.day} ${_monthLabels[dt.month - 1]}'
+              : '${dt.day} ${_monthLabels[dt.month - 1]} ${dt.year}';
+        case GraphTab.week:
+          final parts = key.split('-W');
+          return short ? 'Wk ${parts[1]}' : 'Week ${parts[1]}, ${parts[0]}';
+        case GraphTab.month:
+          final parts = key.split('-');
+          final mon = _monthLabels[int.parse(parts[1]) - 1];
+          return short ? mon : '$mon ${parts[0]}';
+        case GraphTab.year:
+          return key;
+        case GraphTab.custom:
+          return '';
+      }
+    } catch (_) {
+      return key;
+    }
+  }
+
+  String _gradeFromScore(double score) {
+    if (score >= 90) return 'A';
+    if (score >= 80) return 'B';
+    if (score >= 70) return 'C';
+    if (score >= 60) return 'D';
+    return 'F';
+  }
+
+  String _buildSummary() {
+    if (_activeTab == GraphTab.custom) {
+      final count = widget.customSelection.length;
+      final scores = widget.customSelection
+          .map((e) => (e['overall_score'] as num).toDouble())
+          .toList();
+      final avg = scores.reduce((a, b) => a + b) / scores.length;
+      final highest = scores.reduce((a, b) => a > b ? a : b);
+      final lowest = scores.reduce((a, b) => a < b ? a : b);
+      return 'Showing $count selected assessments. '
+          'Average score: ${avg.toStringAsFixed(0)}%, '
+          'ranging from ${lowest.toStringAsFixed(0)}% to ${highest.toStringAsFixed(0)}%.';
+    }
+
+    final buckets = _buildBuckets(_activeTab);
+    final lensNames = {
+      'universal': 'Universal',
+      'feminine': 'Feminine',
+      'masculine': 'Masculine',
+    };
+
+    String? mostConsistentLens;
+    double smallestRange = double.infinity;
+    String? mostVariableLens;
+    double largestRange = 0;
+
+    for (final lens in buckets.keys) {
+      final pts = buckets[lens]!;
+      if (pts.length < 2) continue;
+      final scores = pts.map((p) => p.avg).toList();
+      final range = scores.reduce((a, b) => a > b ? a : b) -
+          scores.reduce((a, b) => a < b ? a : b);
+      if (range < smallestRange) {
+        smallestRange = range;
+        mostConsistentLens = lens;
+      }
+      if (range > largestRange) {
+        largestRange = range;
+        mostVariableLens = lens;
+      }
+    }
+
+    final trend = _trend();
+    final trendText = trend > 3
+        ? 'Your scores are trending upward — good momentum.'
+        : trend < -3
+            ? 'Your scores have dipped recently — worth reflecting on.'
+            : 'Your scores are holding steady.';
+
+    if (mostConsistentLens != null &&
+        mostVariableLens != null &&
+        mostConsistentLens != mostVariableLens) {
+      return '${lensNames[mostConsistentLens]} has been your most consistent lens. '
+          '${lensNames[mostVariableLens]} shows the most variation. $trendText';
+    }
+    if (mostConsistentLens != null) {
+      return '${lensNames[mostConsistentLens]} has been your most consistent lens. $trendText';
+    }
+    return trendText;
+  }
+
+  Map<String, List<_RawPoint>> _buildCustomRawPoints() {
+    final Map<String, List<_RawPoint>> raw = {
+      'universal': [],
+      'feminine': [],
+      'masculine': [],
+    };
+    final sorted = List<Map<String, dynamic>>.from(widget.customSelection)
+      ..sort((a, b) =>
+          (a['created_at'] as String).compareTo(b['created_at'] as String));
+    for (final item in sorted) {
+      final lens = item['lens'] as String;
+      if (!raw.containsKey(lens)) continue;
+      raw[lens]!.add(_RawPoint(
+        score: (item['overall_score'] as num).toDouble(),
+        date: DateTime.parse(item['created_at'] as String).toLocal(),
+        lens: lens,
+      ));
+    }
+    return raw;
+  }
+
+  // ── STATS ─────────────────────────────────────────────────────────────────
+
+  double _bestWeekAverage() {
+    final weekBuckets = _buildBuckets(GraphTab.week);
+    double best = 0;
+    for (final pts in weekBuckets.values) {
+      for (final p in pts) {
+        if (p.avg > best) best = p.avg;
+      }
+    }
+    return best;
+  }
+
+  double _trend() {
+    final buckets = _buildBuckets(
+        _activeTab == GraphTab.custom ? GraphTab.day : _activeTab);
+    final Map<String, List<double>> merged = {};
+    for (final pts in buckets.values) {
+      for (final p in pts) {
+        merged.putIfAbsent(p.key, () => []).add(p.avg);
+      }
+    }
+    final keys = merged.keys.toList()..sort();
+    if (keys.length < 2) return 0;
+    final latest =
+        merged[keys.last]!.reduce((a, b) => a + b) / merged[keys.last]!.length;
+    final previous = merged[keys[keys.length - 2]]!.reduce((a, b) => a + b) /
+        merged[keys[keys.length - 2]]!.length;
+    return latest - previous;
+  }
+
+  // ── BUILD ─────────────────────────────────────────────────────────────────
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: Row(
+          children: [
+            Image.asset('assets/images/Align-Logo.png',
+                height: 30, fit: BoxFit.contain),
+            const SizedBox(width: 8),
+            const Text('Align',
+                style: TextStyle(
+                    color: kBrand, fontSize: 18, fontWeight: FontWeight.w800)),
+          ],
+        ),
+      ),
+      body: SafeArea(
+        child: ListView(
+          padding: const EdgeInsets.fromLTRB(20, 16, 20, 32),
+          children: [
+            const Text(
+              'Progress Over Time',
+              style: TextStyle(
+                fontSize: 22,
+                fontWeight: FontWeight.w800,
+                color: kTextPrimary,
+                letterSpacing: -0.5,
+              ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              '${widget.history.length} assessment${widget.history.length == 1 ? '' : 's'} recorded',
+              style: const TextStyle(fontSize: 13, color: kTextSub),
+            ),
+            const SizedBox(height: 16),
+            _buildTabBar(),
+            const SizedBox(height: 16),
+            // ── PLAIN ENGLISH SUMMARY ──────────────────────────────────────
+            AlignCard(
+              color: kBrandLight,
+              padding: const EdgeInsets.all(14),
+              child: Text(
+                _buildSummary(),
+                style: const TextStyle(
+                    fontSize: 13, color: kBrandDark, height: 1.5),
+              ),
+            ),
+            const SizedBox(height: 12),
+            // ── GRAPH CARD ─────────────────────────────────────────────────
+            AlignCard(
+              padding: const EdgeInsets.fromLTRB(12, 16, 12, 12),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  _buildGraph(),
+                  const SizedBox(height: 12),
+                  _buildLegend(),
+                  const SizedBox(height: 8),
+                  Center(
+                    child: Text(
+                      _activeTab == GraphTab.custom
+                          ? 'Each dot is one selected assessment. Tap a dot for details.'
+                          : _activeTab == GraphTab.day
+                              ? 'Each dot is the average score for that day. Tap for details.'
+                              : _activeTab == GraphTab.week
+                                  ? 'Each dot is the average score for that week. Tap for details.'
+                                  : _activeTab == GraphTab.month
+                                      ? 'Each dot is the average score for that month. Tap for details.'
+                                      : 'Each dot is the average score for that year. Tap for details.',
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(
+                          fontSize: 11, color: kTextSub, height: 1.4),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 14),
+            _buildStatsCards(),
+            const SizedBox(height: 14),
+            if (_activeTab != GraphTab.custom)
+              AlignCard(
+                color: kBrandLight,
+                padding: const EdgeInsets.all(14),
+                child: Row(
+                  children: const [
+                    Icon(Icons.touch_app_rounded, size: 16, color: kBrand),
+                    SizedBox(width: 10),
+                    Expanded(
+                      child: Text(
+                        'Long-press any assessment in History to select specific entries and plot them on a Custom view.',
+                        style: TextStyle(
+                            fontSize: 12, color: kBrandDark, height: 1.4),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildTabBar() {
+    const tabs = [
+      (GraphTab.day, 'Day'),
+      (GraphTab.week, 'Week'),
+      (GraphTab.month, 'Month'),
+      (GraphTab.year, 'Year'),
+      (GraphTab.custom, 'Custom'),
+    ];
+    return Container(
+      decoration: BoxDecoration(
+        color: kSurface,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: kBorder),
+      ),
+      padding: const EdgeInsets.all(4),
+      child: Row(
+        children: tabs.map((t) {
+          final tab = t.$1;
+          final label = t.$2;
+          final enabled = _tabEnabled(tab);
+          final active = _activeTab == tab;
+          return Expanded(
+            child: GestureDetector(
+              onTap: enabled ? () => setState(() => _activeTab = tab) : null,
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 200),
+                padding: const EdgeInsets.symmetric(vertical: 8),
+                decoration: BoxDecoration(
+                  color: active ? kBrand : Colors.transparent,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Text(
+                  label,
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: active ? FontWeight.w700 : FontWeight.w500,
+                    color: active
+                        ? kSurface
+                        : enabled
+                            ? kTextPrimary
+                            : kTextSub.withValues(alpha: 0.4),
+                  ),
+                ),
+              ),
+            ),
+          );
+        }).toList(),
+      ),
+    );
+  }
+
+  Widget _buildGraph() {
+    if (_activeTab == GraphTab.custom) return _buildCustomGraph();
+    return _buildBucketGraph();
+  }
+
+  Widget _buildBucketGraph() {
+    final buckets = _buildBuckets(_activeTab);
+    final allKeys = <String>{};
+    for (final pts in buckets.values) {
+      for (final p in pts) {
+        allKeys.add(p.key);
+      }
+    }
+    final sortedKeys = allKeys.toList()..sort();
+
+    if (sortedKeys.length < 2) {
+      return const SizedBox(
+        height: 200,
+        child: Center(
+          child: Text(
+            'Not enough data for this view yet.\nTry a different time range.',
+            textAlign: TextAlign.center,
+            style: TextStyle(fontSize: 13, color: kTextSub, height: 1.5),
+          ),
+        ),
+      );
+    }
+
+    List<LineChartBarData> lineBars = [];
+    final lensConfig = {
+      'universal': (kLensUniversal, 'Universal'),
+      'feminine': (kLensFeminine, 'Feminine'),
+      'masculine': (kLensMasculine, 'Masculine'),
+    };
+
+    for (final entry in lensConfig.entries) {
+      final lens = entry.key;
+      final color = entry.value.$1;
+      final pts = buckets[lens] ?? [];
+      if (pts.length < 2) continue;
+      final spots = pts.map((p) {
+        final x = sortedKeys.indexOf(p.key).toDouble();
+        return FlSpot(x, p.avg);
+      }).toList();
+      lineBars.add(LineChartBarData(
+        spots: spots,
+        isCurved: true,
+        color: color,
+        barWidth: 2.5,
+        isStrokeCapRound: true,
+        dotData: FlDotData(
+          show: true,
+          getDotPainter: (spot, _, __, ___) => FlDotCirclePainter(
+            radius: 5,
+            color: color,
+            strokeWidth: 2,
+            strokeColor: kSurface,
+          ),
+        ),
+        belowBarData: BarAreaData(show: false),
+      ));
+    }
+
+    if (lineBars.isEmpty) {
+      return const SizedBox(
+        height: 200,
+        child: Center(
+          child: Text(
+            'Not enough data for this view yet.\nTry a different time range.',
+            textAlign: TextAlign.center,
+            style: TextStyle(fontSize: 13, color: kTextSub, height: 1.5),
+          ),
+        ),
+      );
+    }
+
+    // Cap x-axis to real data — no phantom positions beyond the last point
+    final maxX = (sortedKeys.length - 1).toDouble();
+    final skipLabels = sortedKeys.length > 8;
+
+    return SizedBox(
+      height: 240,
+      child: LineChart(
+        LineChartData(
+          minY: 0,
+          maxY: 100,
+          minX: 0,
+          maxX: maxX,
+          gridData: FlGridData(
+            show: true,
+            drawVerticalLine: false,
+            horizontalInterval: 25,
+            getDrawingHorizontalLine: (_) =>
+                const FlLine(color: kBorder, strokeWidth: 1),
+          ),
+          borderData: FlBorderData(show: false),
+          titlesData: FlTitlesData(
+            leftTitles: AxisTitles(
+              sideTitles: SideTitles(
+                showTitles: true,
+                interval: 25,
+                reservedSize: 36,
+                getTitlesWidget: (value, _) => Text(
+                  '${value.toInt()}%',
+                  style: const TextStyle(fontSize: 10, color: kTextSub),
+                ),
+              ),
+            ),
+            bottomTitles: AxisTitles(
+              sideTitles: SideTitles(
+                showTitles: true,
+                reservedSize: 32,
+                getTitlesWidget: (value, _) {
+                  final idx = value.toInt();
+                  if (idx < 0 || idx >= sortedKeys.length) {
+                    return const SizedBox.shrink();
+                  }
+                  if (skipLabels && idx % 2 != 0) {
+                    return const SizedBox.shrink();
+                  }
+                  return Padding(
+                    padding: const EdgeInsets.only(top: 6),
+                    child: Text(
+                      _bucketLabel(sortedKeys[idx], _activeTab, short: true),
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(fontSize: 9, color: kTextSub),
+                    ),
+                  );
+                },
+              ),
+            ),
+            rightTitles:
+                const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+            topTitles:
+                const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+          ),
+          lineBarsData: lineBars,
+          lineTouchData: LineTouchData(
+            touchTooltipData: LineTouchTooltipData(
+              getTooltipItems: (touchedSpots) {
+                return touchedSpots.map((s) {
+                  final idx = s.x.toInt();
+                  if (idx < 0 || idx >= sortedKeys.length) {
+                    return LineTooltipItem(
+                        '', const TextStyle(color: kSurface));
+                  }
+                  final fullLabel =
+                      _bucketLabel(sortedKeys[idx], _activeTab, short: false);
+                  final grade = _gradeFromScore(s.y);
+                  return LineTooltipItem(
+                    '$fullLabel\n${s.y.toStringAsFixed(0)}%  ·  Grade $grade',
+                    const TextStyle(
+                      color: kSurface,
+                      fontWeight: FontWeight.w700,
+                      fontSize: 12,
+                      height: 1.5,
+                    ),
+                  );
+                }).toList();
+              },
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildCustomGraph() {
+    final rawMap = _buildCustomRawPoints();
+    final sorted = List<Map<String, dynamic>>.from(widget.customSelection)
+      ..sort((a, b) =>
+          (a['created_at'] as String).compareTo(b['created_at'] as String));
+
+    List<LineChartBarData> lineBars = [];
+    final lensConfig = {
+      'universal': kLensUniversal,
+      'feminine': kLensFeminine,
+      'masculine': kLensMasculine,
+    };
+
+    for (final entry in lensConfig.entries) {
+      final lens = entry.key;
+      final color = entry.value;
+      final pts = rawMap[lens] ?? [];
+      if (pts.isEmpty) continue;
+      final spots = pts.map((p) {
+        final globalIdx = sorted.indexWhere((item) =>
+            item['lens'] == lens &&
+            (item['overall_score'] as num).toDouble() == p.score &&
+            DateTime.parse(item['created_at'] as String)
+                    .toLocal()
+                    .difference(p.date)
+                    .inSeconds
+                    .abs() <
+                2);
+        return FlSpot(globalIdx >= 0 ? globalIdx.toDouble() : 0, p.score);
+      }).toList();
+      lineBars.add(LineChartBarData(
+        spots: spots,
+        isCurved: false,
+        color: color,
+        barWidth: 2.5,
+        isStrokeCapRound: true,
+        dotData: FlDotData(
+          show: true,
+          getDotPainter: (spot, _, __, ___) => FlDotCirclePainter(
+            radius: 6,
+            color: color,
+            strokeWidth: 2.5,
+            strokeColor: kSurface,
+          ),
+        ),
+        belowBarData: BarAreaData(show: false),
+      ));
+    }
+
+    final maxX = (sorted.length - 1).toDouble();
+    final skipLabels = sorted.length > 8;
+
+    return SizedBox(
+      height: 240,
+      child: LineChart(
+        LineChartData(
+          minY: 0,
+          maxY: 100,
+          minX: 0,
+          maxX: maxX < 1 ? 1 : maxX,
+          gridData: FlGridData(
+            show: true,
+            drawVerticalLine: false,
+            horizontalInterval: 25,
+            getDrawingHorizontalLine: (_) =>
+                const FlLine(color: kBorder, strokeWidth: 1),
+          ),
+          borderData: FlBorderData(show: false),
+          titlesData: FlTitlesData(
+            leftTitles: AxisTitles(
+              sideTitles: SideTitles(
+                showTitles: true,
+                interval: 25,
+                reservedSize: 36,
+                getTitlesWidget: (value, _) => Text(
+                  '${value.toInt()}%',
+                  style: const TextStyle(fontSize: 10, color: kTextSub),
+                ),
+              ),
+            ),
+            bottomTitles: AxisTitles(
+              sideTitles: SideTitles(
+                showTitles: true,
+                reservedSize: 32,
+                getTitlesWidget: (value, _) {
+                  final idx = value.toInt();
+                  if (idx < 0 || idx >= sorted.length) {
+                    return const SizedBox.shrink();
+                  }
+                  if (skipLabels && idx % 2 != 0) {
+                    return const SizedBox.shrink();
+                  }
+                  final dt = DateTime.parse(sorted[idx]['created_at'] as String)
+                      .toLocal();
+                  return Padding(
+                    padding: const EdgeInsets.only(top: 6),
+                    child: Text(
+                      '${dt.day} ${_monthLabels[dt.month - 1]}',
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(fontSize: 9, color: kTextSub),
+                    ),
+                  );
+                },
+              ),
+            ),
+            rightTitles:
+                const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+            topTitles:
+                const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+          ),
+          lineBarsData: lineBars,
+          lineTouchData: LineTouchData(
+            touchTooltipData: LineTouchTooltipData(
+              getTooltipItems: (touchedSpots) {
+                return touchedSpots.map((s) {
+                  final idx = s.x.toInt();
+                  if (idx < 0 || idx >= sorted.length) {
+                    return LineTooltipItem(
+                        '', const TextStyle(color: kSurface));
+                  }
+                  final item = sorted[idx];
+                  final dt =
+                      DateTime.parse(item['created_at'] as String).toLocal();
+                  final dateStr =
+                      '${dt.day} ${_monthLabels[dt.month - 1]} ${dt.year}';
+                  final lens = item['lens'] as String;
+                  final lensLabel = lens == 'feminine'
+                      ? 'Feminine'
+                      : lens == 'masculine'
+                          ? 'Masculine'
+                          : 'Universal';
+                  final grade = _gradeFromScore(s.y);
+                  return LineTooltipItem(
+                    '$dateStr  ·  $lensLabel\n${s.y.toStringAsFixed(0)}%  ·  Grade $grade',
+                    const TextStyle(
+                      color: kSurface,
+                      fontWeight: FontWeight.w700,
+                      fontSize: 12,
+                      height: 1.5,
+                    ),
+                  );
+                }).toList();
+              },
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildLegend() {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: [
+        _legendDot(kLensUniversal, 'Universal'),
+        const SizedBox(width: 16),
+        _legendDot(kLensFeminine, 'Feminine'),
+        const SizedBox(width: 16),
+        _legendDot(kLensMasculine, 'Masculine'),
+      ],
+    );
+  }
+
+  Widget _legendDot(Color color, String label) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Container(
+          width: 10,
+          height: 10,
+          decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+        ),
+        const SizedBox(width: 5),
+        Text(label, style: const TextStyle(fontSize: 11, color: kTextSub)),
+      ],
+    );
+  }
+
+  Widget _buildStatsCards() {
+    final bestWeek = _bestWeekAverage();
+    final trend = _trend();
+    final trendUp = trend >= 0;
+    final trendColor = trendUp ? kScoreGreen : kScoreRed;
+    final trendIcon =
+        trendUp ? Icons.arrow_upward_rounded : Icons.arrow_downward_rounded;
+    final trendLabel = '${trendUp ? '+' : ''}${trend.toStringAsFixed(0)}%';
+
+    return Row(
+      children: [
+        Expanded(
+          child: AlignCard(
+            color: kBrandLight,
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('Best Week Avg',
+                    style: TextStyle(fontSize: 11, color: kTextSub)),
+                const SizedBox(height: 6),
+                Text(
+                  bestWeek > 0 ? '${bestWeek.toStringAsFixed(0)}%' : '—',
+                  style: const TextStyle(
+                    fontSize: 24,
+                    fontWeight: FontWeight.w800,
+                    color: kScoreGreen,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                const Text(
+                  'Highest avg across all weeks',
+                  style: TextStyle(fontSize: 10, color: kTextSub),
+                ),
+              ],
+            ),
+          ),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          child: AlignCard(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('Trend',
+                    style: TextStyle(fontSize: 11, color: kTextSub)),
+                const SizedBox(height: 6),
+                Row(
+                  children: [
+                    if (trend != 0)
+                      Icon(trendIcon, size: 18, color: trendColor),
+                    if (trend != 0) const SizedBox(width: 4),
+                    Text(
+                      trend == 0 ? '—' : trendLabel,
+                      style: TextStyle(
+                        fontSize: 24,
+                        fontWeight: FontWeight.w800,
+                        color: trend == 0 ? kTextSub : trendColor,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 2),
+                const Text(
+                  'vs previous period',
+                  style: TextStyle(fontSize: 10, color: kTextSub),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// GRAPH DATA MODELS
+// ─────────────────────────────────────────────────────────────────────────────
+class _BucketPoint {
+  final String key;
+  final double avg;
+  final int count;
+  const _BucketPoint(
+      {required this.key, required this.avg, required this.count});
+}
+
+class _RawPoint {
+  final double score;
+  final DateTime date;
+  final String lens;
+  const _RawPoint(
+      {required this.score, required this.date, required this.lens});
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -603,9 +2397,54 @@ class _AssessmentPageState extends State<AssessmentPage> {
                 label: touched.length == pillars.length
                     ? 'See My Results'
                     : 'Continue with Current Scores',
-                onPressed: () {
+                onPressed: () async {
+                  // Show warning dialog if any pillars are unrated
+                  if (touched.length < pillars.length) {
+                    final unrated = pillars.length - touched.length;
+                    final proceed = await showDialog<bool>(
+                      context: context,
+                      builder: (_) => AlertDialog(
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(16)),
+                        title: const Text(
+                          'Some pillars are unrated',
+                          style: TextStyle(
+                            fontSize: 17,
+                            fontWeight: FontWeight.w700,
+                            color: kTextPrimary,
+                          ),
+                        ),
+                        content: Text(
+                          '$unrated pillar${unrated == 1 ? '' : 's'} '
+                          '${unrated == 1 ? 'has' : 'have'} not been rated and '
+                          '${unrated == 1 ? 'will' : 'will all'} score as 0. '
+                          'This will lower your overall result.\n\nDo you want to continue anyway?',
+                          style: const TextStyle(
+                              fontSize: 14, color: kTextSub, height: 1.5),
+                        ),
+                        actions: [
+                          TextButton(
+                            onPressed: () => Navigator.pop(context, false),
+                            child: const Text('Go Back',
+                                style: TextStyle(color: kTextSub)),
+                          ),
+                          TextButton(
+                            onPressed: () => Navigator.pop(context, true),
+                            child: const Text(
+                              'Continue Anyway',
+                              style: TextStyle(
+                                  color: kBrand, fontWeight: FontWeight.w700),
+                            ),
+                          ),
+                        ],
+                      ),
+                    );
+                    if (proceed != true) return;
+                  }
+
                   final total = scores.reduce((a, b) => a + b);
                   final percentage = (total / 70) * 100;
+                  if (!context.mounted) return;
                   Navigator.pushReplacement(
                     context,
                     MaterialPageRoute(
@@ -753,20 +2592,43 @@ class ResultsPage extends StatefulWidget {
 
 class _ResultsPageState extends State<ResultsPage> {
   bool isPremium = false;
+  bool _loadingPremium = true;
+  bool _saved = false;
 
   @override
   void initState() {
     super.initState();
     _loadPremium();
+    _saveAssessment();
   }
 
   Future<void> _loadPremium() async {
     if (kDebugMode) {
-      setState(() => isPremium = true);
+      setState(() {
+        isPremium = true;
+        _loadingPremium = false;
+      });
       return;
     }
-    isPremium = await PremiumService.isPremium();
-    setState(() {});
+    try {
+      isPremium = await PremiumService.isPremium()
+          .timeout(const Duration(seconds: 5), onTimeout: () => false);
+    } catch (_) {
+      isPremium = false;
+    }
+    setState(() => _loadingPremium = false);
+  }
+
+  Future<void> _saveAssessment() async {
+    if (!AuthService.isSignedIn) return;
+    final lensString = widget.lens.name;
+    final saved = await AssessmentService.save(
+      lens: lensString,
+      scores: widget.scores,
+      overallScore: widget.percentage,
+      grade: grade,
+    );
+    if (saved) setState(() => _saved = true);
   }
 
   String get grade {
@@ -814,266 +2676,341 @@ class _ResultsPageState extends State<ResultsPage> {
           ],
         ),
       ),
-      body: ListView(
-        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
-        children: [
-          // ── SCORE HERO CARD ─────────────────────────────────────────
-          AlignCard(
-            color: gradeColor == kScoreGreen
-                ? kBrandLight
-                : gradeColor.withValues(alpha: 0.06),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.center,
-              children: [
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        '${widget.percentage.toStringAsFixed(0)}%',
-                        style: TextStyle(
-                          fontSize: 52,
-                          fontWeight: FontWeight.w800,
-                          color: gradeColor,
-                          letterSpacing: -2,
-                        ),
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        InsightEngine.overall(widget.percentage, widget.lens),
-                        style: const TextStyle(
-                            fontSize: 14, color: kTextSub, height: 1.4),
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(width: 16),
-                Column(
-                  children: [
-                    Container(
-                      width: 68,
-                      height: 68,
-                      decoration: BoxDecoration(
-                        color: gradeColor,
-                        borderRadius: BorderRadius.circular(18),
-                        boxShadow: [
-                          BoxShadow(
-                            color: gradeColor.withValues(alpha: 0.4),
-                            blurRadius: 12,
-                            offset: const Offset(0, 4),
-                          ),
-                        ],
-                      ),
-                      child: Center(
-                        child: Text(
-                          grade,
-                          style: const TextStyle(
-                            fontSize: 32,
-                            fontWeight: FontWeight.w800,
-                            color: kSurface,
-                          ),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 6),
-                    Text(lensLabel,
-                        style: const TextStyle(fontSize: 11, color: kTextSub)),
-                  ],
-                ),
-              ],
-            ),
-          ),
-
-          const SizedBox(height: 14),
-
-          // ── KEY OBSERVATIONS ────────────────────────────────────────
-          AlignCard(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const SectionHeading('Key Observations'),
-                _observationRow(
-                  Icons.arrow_upward_rounded,
-                  kScoreGreen,
-                  InsightEngine.pillar(
-                    pillars[widget.scores.indexOf(maxScore)],
-                    maxScore,
-                  ),
-                ),
-                const SizedBox(height: 10),
-                _observationRow(
-                  Icons.arrow_downward_rounded,
-                  kScoreRed,
-                  InsightEngine.pillar(
-                    pillars[widget.scores.indexOf(minScore)],
-                    minScore,
-                  ),
-                ),
-              ],
-            ),
-          ),
-
-          const SizedBox(height: 14),
-
-          // ── PREMIUM CONTENT ─────────────────────────────────────────
-          if (isPremium) ...[
-            AlignCard(
+      body: _loadingPremium
+          ? const Center(
               child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  const SectionHeading('Relationship Structure Map'),
-                  PillarRadarChart(scores: widget.scores),
+                  CircularProgressIndicator(color: kBrand),
+                  SizedBox(height: 16),
+                  Text('Loading your results...',
+                      style: TextStyle(color: kTextSub, fontSize: 14)),
                 ],
               ),
-            ),
-            const SizedBox(height: 14),
-            AlignCard(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const SectionHeading('Alignment Distribution'),
-                  pillarAuthorityChart(widget.scores),
-                ],
-              ),
-            ),
-            const SizedBox(height: 14),
-            AlignCard(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const SectionHeading('Pillar Stability Overview'),
-                  ...PremiumInsightEngine.buildPillarStability(widget.scores),
-                  const SizedBox(height: 16),
-                  Container(
-                    width: double.infinity,
-                    padding: const EdgeInsets.all(14),
-                    decoration: BoxDecoration(
-                      color: kBrand.withValues(alpha: 0.08),
-                      borderRadius: BorderRadius.circular(10),
-                    ),
-                    child: Text(
-                      PremiumInsightEngine.renderInsights(widget.scores),
-                      style: const TextStyle(
-                          fontSize: 14, color: kBrandDark, height: 1.5),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 14),
-          ],
-
-          // ── PREMIUM LOCK CARD (free users in production) ─────────────
-          if (!isPremium && !kDebugMode)
-            Stack(
+            )
+          : ListView(
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
               children: [
-                AlignCard(
-                  color: const Color(0xFFFDF9F0),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 10, vertical: 4),
-                        decoration: BoxDecoration(
-                          color: kPremiumGold.withValues(alpha: 0.15),
-                          borderRadius: BorderRadius.circular(20),
-                        ),
-                        child: const Text(
-                          'PREMIUM',
+                // ── SAVED INDICATOR ──────────────────────────────────────────
+                if (_saved)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 12),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(Icons.check_circle_rounded,
+                            size: 14, color: kBrand.withValues(alpha: 0.7)),
+                        const SizedBox(width: 6),
+                        Text(
+                          'Assessment saved to your history',
                           style: TextStyle(
-                            fontSize: 11,
-                            fontWeight: FontWeight.w700,
-                            color: kPremiumGold,
-                            letterSpacing: 0.8,
-                          ),
+                              fontSize: 12,
+                              color: kBrand.withValues(alpha: 0.7)),
+                        ),
+                      ],
+                    ),
+                  ),
+
+                // ── SIGN IN PROMPT ───────────────────────────────────────────
+                if (!AuthService.isSignedIn)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 12),
+                    child: GestureDetector(
+                      onTap: () async {
+                        final result = await Navigator.push<bool>(
+                          context,
+                          MaterialPageRoute(builder: (_) => const AuthPage()),
+                        );
+                        if (result == true) {
+                          setState(() {});
+                          _saveAssessment();
+                        }
+                      },
+                      child: AlignCard(
+                        color: kBrandLight,
+                        padding: const EdgeInsets.all(14),
+                        child: Row(
+                          children: const [
+                            Icon(Icons.history_rounded,
+                                color: kBrand, size: 18),
+                            SizedBox(width: 10),
+                            Expanded(
+                              child: Text(
+                                'Sign in to save this result and track your progress',
+                                style: TextStyle(
+                                    fontSize: 13,
+                                    color: kBrandDark,
+                                    height: 1.4),
+                              ),
+                            ),
+                            Icon(Icons.chevron_right_rounded,
+                                color: kBrand, size: 18),
+                          ],
                         ),
                       ),
-                      const SizedBox(height: 12),
-                      const Text(
-                        'Unlock your full analysis',
-                        style: TextStyle(
-                          fontSize: 17,
-                          fontWeight: FontWeight.w700,
-                          color: kTextPrimary,
+                    ),
+                  ),
+
+                // ── SCORE HERO CARD ──────────────────────────────────────────
+                AlignCard(
+                  color: gradeColor == kScoreGreen
+                      ? kBrandLight
+                      : gradeColor.withValues(alpha: 0.06),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.center,
+                    children: [
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              '${widget.percentage.toStringAsFixed(0)}%',
+                              style: TextStyle(
+                                fontSize: 52,
+                                fontWeight: FontWeight.w800,
+                                color: gradeColor,
+                                letterSpacing: -2,
+                              ),
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              InsightEngine.overall(
+                                  widget.percentage, widget.lens),
+                              style: const TextStyle(
+                                  fontSize: 14, color: kTextSub, height: 1.4),
+                            ),
+                          ],
                         ),
                       ),
-                      const SizedBox(height: 6),
-                      const Text(
-                        'Get the radar map, alignment distribution, pillar stability '
-                        'ratings, and a full structural insight into your relationship.',
-                        style: TextStyle(
-                            fontSize: 13, color: kTextSub, height: 1.5),
-                      ),
-                      const SizedBox(height: 16),
-                      SizedBox(
-                        width: double.infinity,
-                        child: ElevatedButton(
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: kPremiumGold,
-                            foregroundColor: kSurface,
-                            elevation: 0,
-                            padding: const EdgeInsets.symmetric(vertical: 14),
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(12),
+                      const SizedBox(width: 16),
+                      Column(
+                        children: [
+                          Container(
+                            width: 68,
+                            height: 68,
+                            decoration: BoxDecoration(
+                              color: gradeColor,
+                              borderRadius: BorderRadius.circular(18),
+                              boxShadow: [
+                                BoxShadow(
+                                  color: gradeColor.withValues(alpha: 0.4),
+                                  blurRadius: 12,
+                                  offset: const Offset(0, 4),
+                                ),
+                              ],
+                            ),
+                            child: Center(
+                              child: Text(
+                                grade,
+                                style: const TextStyle(
+                                  fontSize: 32,
+                                  fontWeight: FontWeight.w800,
+                                  color: kSurface,
+                                ),
+                              ),
                             ),
                           ),
-                          onPressed: () async {
-                            // ignore: todo
-                            // TODO(payments): Replace with RevenueCat purchase before release
-                            await PremiumService.unlockPremium();
-                            setState(() => isPremium = true);
-                            if (context.mounted) {
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                const SnackBar(
-                                  content: Text('Premium unlocked! 🎉'),
-                                  backgroundColor: kBrandDark,
-                                ),
-                              );
-                            }
-                          },
-                          child: const Text(
-                            'Unlock Premium',
-                            style: TextStyle(
-                                fontSize: 15, fontWeight: FontWeight.w700),
-                          ),
+                          const SizedBox(height: 6),
+                          Text(lensLabel,
+                              style: const TextStyle(
+                                  fontSize: 11, color: kTextSub)),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+
+                const SizedBox(height: 14),
+
+                // ── KEY OBSERVATIONS ─────────────────────────────────────────
+                AlignCard(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const SectionHeading('Key Observations'),
+                      _observationRow(
+                        Icons.arrow_upward_rounded,
+                        kScoreGreen,
+                        InsightEngine.pillar(
+                          pillars[widget.scores.indexOf(maxScore)],
+                          maxScore,
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                      _observationRow(
+                        Icons.arrow_downward_rounded,
+                        kScoreRed,
+                        InsightEngine.pillar(
+                          pillars[widget.scores.indexOf(minScore)],
+                          minScore,
                         ),
                       ),
                     ],
                   ),
                 ),
-                Positioned(
-                  top: 12,
-                  right: 12,
-                  child: Icon(Icons.lock_outline_rounded,
-                      color: kPremiumGold.withValues(alpha: 0.5), size: 22),
+
+                const SizedBox(height: 14),
+
+                // ── PREMIUM CONTENT ──────────────────────────────────────────
+                if (isPremium) ...[
+                  AlignCard(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const SectionHeading('Relationship Structure Map'),
+                        PillarRadarChart(scores: widget.scores),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 14),
+                  AlignCard(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const SectionHeading('Alignment Distribution'),
+                        pillarAuthorityChart(widget.scores),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 14),
+                  AlignCard(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const SectionHeading('Pillar Stability Overview'),
+                        ...PremiumInsightEngine.buildPillarStability(
+                            widget.scores),
+                        const SizedBox(height: 16),
+                        Container(
+                          width: double.infinity,
+                          padding: const EdgeInsets.all(14),
+                          decoration: BoxDecoration(
+                            color: kBrand.withValues(alpha: 0.08),
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                          child: Text(
+                            PremiumInsightEngine.renderInsights(widget.scores),
+                            style: const TextStyle(
+                                fontSize: 14, color: kBrandDark, height: 1.5),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 14),
+                ],
+
+                // ── PREMIUM LOCK CARD ────────────────────────────────────────
+                if (!isPremium && !kDebugMode)
+                  Stack(
+                    children: [
+                      AlignCard(
+                        color: const Color(0xFFFDF9F0),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 10, vertical: 4),
+                              decoration: BoxDecoration(
+                                color: kPremiumGold.withValues(alpha: 0.15),
+                                borderRadius: BorderRadius.circular(20),
+                              ),
+                              child: const Text(
+                                'PREMIUM',
+                                style: TextStyle(
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w700,
+                                  color: kPremiumGold,
+                                  letterSpacing: 0.8,
+                                ),
+                              ),
+                            ),
+                            const SizedBox(height: 12),
+                            const Text(
+                              'Unlock your full analysis',
+                              style: TextStyle(
+                                fontSize: 17,
+                                fontWeight: FontWeight.w700,
+                                color: kTextPrimary,
+                              ),
+                            ),
+                            const SizedBox(height: 6),
+                            const Text(
+                              'Get the radar map, alignment distribution, pillar stability '
+                              'ratings, and a full structural insight into your relationship.',
+                              style: TextStyle(
+                                  fontSize: 13, color: kTextSub, height: 1.5),
+                            ),
+                            const SizedBox(height: 16),
+                            SizedBox(
+                              width: double.infinity,
+                              child: ElevatedButton(
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: kPremiumGold,
+                                  foregroundColor: kSurface,
+                                  elevation: 0,
+                                  padding:
+                                      const EdgeInsets.symmetric(vertical: 14),
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(12),
+                                  ),
+                                ),
+                                onPressed: () async {
+                                  final purchased = await Navigator.push<bool>(
+                                    context,
+                                    MaterialPageRoute(
+                                        builder: (_) => const PaywallPage()),
+                                  );
+                                  if (purchased == true) {
+                                    setState(() => isPremium = true);
+                                  }
+                                },
+                                child: const Text(
+                                  'View Plans',
+                                  style: TextStyle(
+                                      fontSize: 15,
+                                      fontWeight: FontWeight.w700),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      Positioned(
+                        top: 12,
+                        right: 12,
+                        child: Icon(Icons.lock_outline_rounded,
+                            color: kPremiumGold.withValues(alpha: 0.5),
+                            size: 22),
+                      ),
+                    ],
+                  ),
+
+                if (!isPremium && !kDebugMode) const SizedBox(height: 14),
+
+                // ── SHARE ────────────────────────────────────────────────────
+                SizedBox(
+                  width: double.infinity,
+                  child: AlignButton(
+                    label: 'Share My Result',
+                    icon: Icons.share_rounded,
+                    onPressed: () {
+                      SharePlus.instance.share(
+                        ShareParams(
+                          text:
+                              'I scored ${widget.percentage.toStringAsFixed(0)}% '
+                              '(Grade $grade) on Align — $lensLabel. '
+                              'How aligned is your relationship?',
+                        ),
+                      );
+                    },
+                  ),
                 ),
+
+                const SizedBox(height: 32),
               ],
             ),
-
-          if (!isPremium && !kDebugMode) const SizedBox(height: 14),
-
-          // ── SHARE ────────────────────────────────────────────────────
-          SizedBox(
-            width: double.infinity,
-            child: AlignButton(
-              label: 'Share My Result',
-              icon: Icons.share_rounded,
-              onPressed: () {
-                SharePlus.instance.share(
-                  ShareParams(
-                    text: 'I scored ${widget.percentage.toStringAsFixed(0)}% '
-                        '(Grade $grade) on Align — $lensLabel. '
-                        'How aligned is your relationship?',
-                  ),
-                );
-              },
-            ),
-          ),
-
-          const SizedBox(height: 32),
-        ],
-      ),
     );
   }
 
@@ -1171,18 +3108,703 @@ class PremiumInsightEngine {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// PREMIUM SERVICE
+// PREMIUM SERVICE — RevenueCat
 // ─────────────────────────────────────────────────────────────────────────────
 class PremiumService {
-  static const _key = 'is_premium';
+  static const _apiKey = kReleaseMode
+      ? 'goog_PpWkcNjCqsaqoAuNHFCzlBuYfkK'
+      : 'test_mIZCjyeqBNBaAtTTrqnBzcwuSeT';
+  static const _entitlement = 'pro_access';
 
-  static Future<bool> isPremium() async {
-    final prefs = await SharedPreferences.getInstance();
-    return prefs.getBool(_key) ?? false;
+  static Future<void> init() async {
+    await Purchases.setLogLevel(LogLevel.debug);
+    final config = PurchasesConfiguration(_apiKey);
+    await Purchases.configure(config);
   }
 
-  static Future<void> unlockPremium() async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool(_key, true);
+  static Future<bool> isPremium() async {
+    try {
+      final info = await Purchases.getCustomerInfo();
+      return info.entitlements.active.containsKey(_entitlement);
+    } catch (_) {
+      return false;
+    }
+  }
+
+  static Future<List<Package>> getPackages() async {
+    try {
+      final offerings = await Purchases.getOfferings();
+      return (offerings.getOffering('premium') ?? offerings.current)
+              ?.availablePackages ??
+          [];
+    } catch (_) {
+      return [];
+    }
+  }
+
+  static Future<bool> purchase(Package package) async {
+    try {
+      await Purchases.purchasePackage(package);
+      final info = await Purchases.getCustomerInfo();
+      return info.entitlements.active.containsKey(_entitlement);
+    } catch (e) {
+      return false;
+    }
+  }
+
+  static Future<bool> restore() async {
+    try {
+      final info = await Purchases.restorePurchases();
+      return info.entitlements.active.containsKey(_entitlement);
+    } catch (_) {
+      return false;
+    }
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PAYWALL PAGE
+// ─────────────────────────────────────────────────────────────────────────────
+class PaywallPage extends StatefulWidget {
+  const PaywallPage({super.key});
+
+  @override
+  State<PaywallPage> createState() => _PaywallPageState();
+}
+
+class _PaywallPageState extends State<PaywallPage> {
+  List<Package> _packages = [];
+  bool _loading = true;
+  bool _purchasing = false;
+  int _selectedIndex = 0;
+
+  static const Map<String, String> _labels = {
+    'monthly': 'Monthly',
+    'quarterly': 'Quarterly',
+    'biannual': 'Bi-Annual',
+    'yearly': 'Annual',
+  };
+
+  static const Map<String, String> _descriptions = {
+    'monthly': 'Billed every month',
+    'quarterly': 'Billed every 3 months',
+    'biannual': 'Billed every 6 months',
+    'yearly': 'Billed once a year — best value',
+  };
+
+  static const Map<String, String> _badges = {
+    'yearly': 'BEST VALUE',
+    'biannual': 'POPULAR',
+  };
+
+  @override
+  void initState() {
+    super.initState();
+    _loadPackages();
+  }
+
+  Future<void> _loadPackages() async {
+    final packages = await PremiumService.getPackages()
+        .timeout(const Duration(seconds: 5), onTimeout: () => []);
+    const order = ['monthly', 'quarterly', 'biannual', 'yearly'];
+    packages.sort((a, b) {
+      final ai = order.indexOf(a.storeProduct.identifier.split(':')[0]);
+      final bi = order.indexOf(b.storeProduct.identifier.split(':')[0]);
+      return ai.compareTo(bi);
+    });
+    final yearlyIndex = packages
+        .indexWhere((p) => p.storeProduct.identifier.split(':')[0] == 'yearly');
+    setState(() {
+      _packages = packages;
+      _selectedIndex = yearlyIndex >= 0 ? yearlyIndex : 0;
+      _loading = false;
+    });
+  }
+
+  Future<void> _purchase() async {
+    if (_packages.isEmpty) return;
+    setState(() => _purchasing = true);
+    final success = await PremiumService.purchase(_packages[_selectedIndex]);
+    setState(() => _purchasing = false);
+    if (success && mounted) {
+      Navigator.pop(context, true);
+    } else if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Purchase could not be completed. Please try again.'),
+          backgroundColor: kScoreRed,
+        ),
+      );
+    }
+  }
+
+  Future<void> _restore() async {
+    setState(() => _purchasing = true);
+    final restored = await PremiumService.restore();
+    setState(() => _purchasing = false);
+    if (restored && mounted) {
+      Navigator.pop(context, true);
+    } else if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('No active subscription found to restore.'),
+          backgroundColor: kScoreAmber,
+        ),
+      );
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: kBackground,
+      appBar: AppBar(
+        title: Row(
+          children: [
+            Image.asset('assets/images/Align-Logo.png',
+                height: 30, fit: BoxFit.contain),
+            const SizedBox(width: 8),
+            const Text('Align',
+                style: TextStyle(
+                    color: kBrand, fontSize: 18, fontWeight: FontWeight.w800)),
+          ],
+        ),
+      ),
+      body: _loading
+          ? const Center(child: CircularProgressIndicator(color: kBrand))
+          : SafeArea(
+              child: SingleChildScrollView(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'Align Pro',
+                      style: TextStyle(
+                        fontSize: 28,
+                        fontWeight: FontWeight.w800,
+                        color: kTextPrimary,
+                        letterSpacing: -0.5,
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    const Text(
+                      'Unlock your full relationship analysis.',
+                      style: TextStyle(fontSize: 15, color: kTextSub),
+                    ),
+                    const SizedBox(height: 20),
+                    AlignCard(
+                      color: kBrandLight,
+                      padding: const EdgeInsets.all(16),
+                      child: Column(
+                        children: const [
+                          _FeatureRow(
+                              icon: Icons.radar_rounded,
+                              text: 'Relationship Structure Radar Map'),
+                          _FeatureRow(
+                              icon: Icons.bar_chart_rounded,
+                              text: 'Alignment Distribution Chart'),
+                          _FeatureRow(
+                              icon: Icons.verified_rounded,
+                              text: 'Pillar Stability Ratings'),
+                          _FeatureRow(
+                              icon: Icons.insights_rounded,
+                              text: 'Deep Structural Insight'),
+                          _FeatureRow(
+                              icon: Icons.show_chart_rounded,
+                              text:
+                                  'Progress Graph — Day, Week, Month & Year views'),
+                          _FeatureRow(
+                              icon: Icons.history_rounded,
+                              text: 'Full Assessment History'),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 20),
+                    if (_packages.isEmpty)
+                      const Center(
+                        child: Text(
+                          'No plans available. Please check your connection.',
+                          style: TextStyle(color: kTextSub),
+                          textAlign: TextAlign.center,
+                        ),
+                      )
+                    else
+                      Column(
+                        children: List.generate(_packages.length, (i) {
+                          final pkg = _packages[i];
+                          final id = pkg.storeProduct.identifier.split(':')[0];
+                          final label = _labels[id] ?? id;
+                          final desc = _descriptions[id] ?? '';
+                          final badge = _badges[id];
+                          final price = pkg.storeProduct.priceString;
+                          final isSelected = i == _selectedIndex;
+
+                          return GestureDetector(
+                            onTap: () => setState(() => _selectedIndex = i),
+                            child: Container(
+                              margin: const EdgeInsets.only(bottom: 10),
+                              padding: const EdgeInsets.all(16),
+                              decoration: BoxDecoration(
+                                color: isSelected
+                                    ? kBrand.withValues(alpha: 0.07)
+                                    : kSurface,
+                                borderRadius: BorderRadius.circular(14),
+                                border: Border.all(
+                                  color: isSelected ? kBrand : kBorder,
+                                  width: isSelected ? 2 : 1,
+                                ),
+                              ),
+                              child: Row(
+                                children: [
+                                  Container(
+                                    width: 22,
+                                    height: 22,
+                                    decoration: BoxDecoration(
+                                      shape: BoxShape.circle,
+                                      border: Border.all(
+                                        color: isSelected ? kBrand : kTextSub,
+                                        width: 2,
+                                      ),
+                                      color: isSelected
+                                          ? kBrand
+                                          : Colors.transparent,
+                                    ),
+                                    child: isSelected
+                                        ? const Icon(Icons.check,
+                                            size: 13, color: kSurface)
+                                        : null,
+                                  ),
+                                  const SizedBox(width: 12),
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        Row(
+                                          children: [
+                                            Text(
+                                              label,
+                                              style: TextStyle(
+                                                fontSize: 15,
+                                                fontWeight: FontWeight.w700,
+                                                color: isSelected
+                                                    ? kBrand
+                                                    : kTextPrimary,
+                                              ),
+                                            ),
+                                            if (badge != null) ...[
+                                              const SizedBox(width: 8),
+                                              Container(
+                                                padding:
+                                                    const EdgeInsets.symmetric(
+                                                        horizontal: 7,
+                                                        vertical: 2),
+                                                decoration: BoxDecoration(
+                                                  color: kPremiumGold,
+                                                  borderRadius:
+                                                      BorderRadius.circular(20),
+                                                ),
+                                                child: Text(
+                                                  badge,
+                                                  style: const TextStyle(
+                                                    fontSize: 9,
+                                                    fontWeight: FontWeight.w800,
+                                                    color: kSurface,
+                                                    letterSpacing: 0.5,
+                                                  ),
+                                                ),
+                                              ),
+                                            ],
+                                          ],
+                                        ),
+                                        Text(
+                                          desc,
+                                          style: const TextStyle(
+                                              fontSize: 12, color: kTextSub),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                  Text(
+                                    price,
+                                    style: TextStyle(
+                                      fontSize: 15,
+                                      fontWeight: FontWeight.w800,
+                                      color: isSelected ? kBrand : kTextPrimary,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          );
+                        }),
+                      ),
+                    const SizedBox(height: 24),
+                    SizedBox(
+                      width: double.infinity,
+                      child: ElevatedButton(
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: kPremiumGold,
+                          foregroundColor: kSurface,
+                          elevation: 2,
+                          shadowColor: kPremiumGold.withValues(alpha: 0.4),
+                          padding: const EdgeInsets.symmetric(vertical: 18),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                        ),
+                        onPressed:
+                            _purchasing || _packages.isEmpty ? null : _purchase,
+                        child: _purchasing
+                            ? const SizedBox(
+                                height: 20,
+                                width: 20,
+                                child: CircularProgressIndicator(
+                                  color: kSurface,
+                                  strokeWidth: 2,
+                                ),
+                              )
+                            : const Text(
+                                'Unlock Align Pro',
+                                style: TextStyle(
+                                    fontSize: 16, fontWeight: FontWeight.w800),
+                              ),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    Center(
+                      child: TextButton(
+                        onPressed: _purchasing ? null : _restore,
+                        child: const Text(
+                          'Restore Purchases',
+                          style: TextStyle(fontSize: 13, color: kTextSub),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                  ],
+                ),
+              ),
+            ),
+    );
+  }
+}
+
+class _FeatureRow extends StatelessWidget {
+  final IconData icon;
+  final String text;
+
+  const _FeatureRow({
+    required this.icon,
+    required this.text,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: Row(
+        children: [
+          Icon(icon, size: 18, color: kBrand),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              text,
+              style: const TextStyle(
+                  fontSize: 13,
+                  color: kTextPrimary,
+                  fontWeight: FontWeight.w500),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// LEGAL PAGE BASE
+// ─────────────────────────────────────────────────────────────────────────────
+class _LegalPage extends StatelessWidget {
+  final String title;
+  final List<_LegalSection> sections;
+  final String lastUpdated;
+
+  const _LegalPage({
+    required this.title,
+    required this.sections,
+    required this.lastUpdated,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: Row(
+          children: [
+            Image.asset('assets/images/Align-Logo.png',
+                height: 30, fit: BoxFit.contain),
+            const SizedBox(width: 8),
+            const Text('Align',
+                style: TextStyle(
+                    color: kBrand, fontSize: 18, fontWeight: FontWeight.w800)),
+          ],
+        ),
+      ),
+      body: ListView(
+        padding: const EdgeInsets.all(24),
+        children: [
+          Text(
+            title,
+            style: const TextStyle(
+              fontSize: 24,
+              fontWeight: FontWeight.w800,
+              color: kTextPrimary,
+              letterSpacing: -0.5,
+            ),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            'Last updated: $lastUpdated',
+            style: const TextStyle(fontSize: 12, color: kTextSub),
+          ),
+          const SizedBox(height: 24),
+          ...sections.map((s) => _buildSection(s)),
+          const SizedBox(height: 32),
+          AlignCard(
+            color: kBrandLight,
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: const [
+                Text(
+                  'Questions or concerns?',
+                  style: TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w700,
+                      color: kTextPrimary),
+                ),
+                SizedBox(height: 4),
+                Text(
+                  'Contact us at:',
+                  style: TextStyle(fontSize: 13, color: kTextSub),
+                ),
+                SizedBox(height: 2),
+                Text(
+                  'adebowale.adeseye.align@gmail.com',
+                  style: TextStyle(
+                      fontSize: 13, color: kBrand, fontWeight: FontWeight.w600),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 24),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSection(_LegalSection section) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 20),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            section.heading,
+            style: const TextStyle(
+              fontSize: 16,
+              fontWeight: FontWeight.w700,
+              color: kTextPrimary,
+            ),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            section.body,
+            style: const TextStyle(fontSize: 14, color: kTextSub, height: 1.6),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _LegalSection {
+  final String heading;
+  final String body;
+  const _LegalSection(this.heading, this.body);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PRIVACY POLICY
+// ─────────────────────────────────────────────────────────────────────────────
+class PrivacyPolicyPage extends StatelessWidget {
+  const PrivacyPolicyPage({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return const _LegalPage(
+      title: 'Privacy Policy',
+      lastUpdated: 'March 2026',
+      sections: [
+        _LegalSection(
+          'Overview',
+          'Align ("we", "our", or "us") is committed to protecting your privacy. '
+              'This Privacy Policy explains how we collect, use, and safeguard your '
+              'information when you use the Align mobile application.',
+        ),
+        _LegalSection(
+          'Information We Collect',
+          'Align is designed with your privacy in mind. We do not collect any '
+              'personally identifiable information unless you choose to create an '
+              'account. The assessment scores you enter are processed locally on '
+              'your device and are not transmitted to our servers without your consent.\n\n'
+              'If you subscribe to Align Pro, we collect payment information solely '
+              'through RevenueCat, our payment processor. We do not store your payment '
+              'details directly.',
+        ),
+        _LegalSection(
+          'How We Use Your Information',
+          'Any information collected is used solely to:\n'
+              '• Provide and improve the Align app experience\n'
+              '• Process your subscription and verify access to premium features\n'
+              '• Save and sync your assessment history when you are signed in\n'
+              '• Respond to your support requests\n\n'
+              'We do not sell, trade, or share your personal information with '
+              'third parties for marketing purposes.',
+        ),
+        _LegalSection(
+          'Third-Party Services',
+          'Align uses the following third-party services:\n\n'
+              '• RevenueCat — for subscription management and payment processing.\n\n'
+              '• Supabase — for user authentication and secure assessment history storage.\n\n'
+              '• Google Play — for app distribution and in-app purchases on Android devices.',
+        ),
+        _LegalSection(
+          'Data Retention',
+          'Assessment data stored in your account is retained until you delete it '
+              'or close your account. You may delete individual assessments at any time '
+              'from the History screen. Subscription records are retained by RevenueCat '
+              'in accordance with their data retention policies.',
+        ),
+        _LegalSection(
+          'Age Restriction',
+          'Align is intended for use by adults aged 18 and over. '
+              'The app deals with adult relationship themes including physical intimacy '
+              'and emotional maturity. We do not knowingly collect personal information '
+              'from anyone under the age of 18. If you believe a minor has created an '
+              'account, please contact us immediately.',
+        ),
+        _LegalSection(
+          'Changes to This Policy',
+          'We may update this Privacy Policy from time to time. We will notify '
+              'you of any significant changes by updating the "Last updated" date '
+              'at the top of this page. Continued use of the app after changes '
+              'constitutes acceptance of the updated policy.',
+        ),
+        _LegalSection(
+          'Contact Us',
+          'If you have any questions about this Privacy Policy, please contact us at:\n'
+              'adebowale.adeseye.align@gmail.com',
+        ),
+      ],
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// TERMS OF SERVICE
+// ─────────────────────────────────────────────────────────────────────────────
+class TermsOfServicePage extends StatelessWidget {
+  const TermsOfServicePage({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return const _LegalPage(
+      title: 'Terms of Service',
+      lastUpdated: 'March 2026',
+      sections: [
+        _LegalSection(
+          'Acceptance of Terms',
+          'By downloading or using the Align app, you agree to be bound by '
+              'these Terms of Service. If you do not agree to these terms, '
+              'please do not use the app.',
+        ),
+        _LegalSection(
+          'Description of Service',
+          'Align is a self-reflection tool designed to help individuals assess '
+              'and understand the alignment of their romantic relationships. '
+              'Align is not a licensed counselling or therapy service and does not '
+              'provide professional relationship advice.',
+        ),
+        _LegalSection(
+          'Age Requirement',
+          'Align is intended for use by adults aged 18 and over. '
+              'By using this app, you confirm that you are at least 18 years of age. '
+              'The app deals with adult relationship themes including physical intimacy, '
+              'emotional vulnerability, and relationship health assessment. '
+              'Use of this app by anyone under the age of 18 is strictly prohibited.',
+        ),
+        _LegalSection(
+          'Important Disclaimer',
+          'Align is a self-reflection and personal assessment tool only. '
+              'The scores, grades, and insights generated by the app are based '
+              'solely on the information you provide and are intended for '
+              'personal reflection purposes only.\n\n'
+              'Align does not replace professional relationship counselling, '
+              'therapy, or advice. If you are experiencing serious relationship '
+              'difficulties, emotional distress, or any form of abuse, please '
+              'seek guidance from a qualified professional immediately.',
+        ),
+        _LegalSection(
+          'Align Pro Subscription',
+          'Align Pro is a paid subscription service that unlocks premium '
+              'features within the app. Subscriptions are available on a monthly, '
+              'quarterly, bi-annual, and annual basis.\n\n'
+              '• Subscriptions automatically renew unless cancelled at least '
+              '24 hours before the end of the current period.\n'
+              '• Payment is charged to your Google Play account upon confirmation.\n'
+              '• You may cancel your subscription at any time through your '
+              'Google Play account settings.\n'
+              '• Refunds are subject to Google Play\'s refund policy.',
+        ),
+        _LegalSection(
+          'User Responsibilities',
+          'You agree to use Align only for lawful purposes and in a manner '
+              'that does not infringe the rights of others. You are responsible '
+              'for maintaining the confidentiality of your account credentials '
+              'and for all activities that occur under your account.',
+        ),
+        _LegalSection(
+          'Intellectual Property',
+          'All content, design, graphics, and code within the Align app are '
+              'the property of Align and are protected by applicable intellectual '
+              'property laws. You may not reproduce, distribute, or create '
+              'derivative works without our express written permission.',
+        ),
+        _LegalSection(
+          'Limitation of Liability',
+          'To the fullest extent permitted by law, Align shall not be liable '
+              'for any indirect, incidental, special, or consequential damages '
+              'arising from your use of the app or reliance on any content '
+              'or insights generated by the app.',
+        ),
+        _LegalSection(
+          'Changes to Terms',
+          'We reserve the right to modify these Terms of Service at any time. '
+              'We will notify you of significant changes by updating the '
+              '"Last updated" date. Continued use of the app after changes '
+              'constitutes acceptance of the updated terms.',
+        ),
+        _LegalSection(
+          'Contact Us',
+          'If you have any questions about these Terms of Service, '
+              'please contact us at:\n'
+              'adebowale.adeseye.align@gmail.com',
+        ),
+      ],
+    );
   }
 }
