@@ -1,4 +1,8 @@
+import 'dart:typed_data';
+import 'dart:ui' as ui;
+
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter/foundation.dart' show kDebugMode, kReleaseMode;
 import 'package:share_plus/share_plus.dart';
 import 'package:fl_chart/fl_chart.dart';
@@ -363,9 +367,16 @@ class _OnboardingPageState extends State<OnboardingPage> {
               ),
               const SizedBox(height: 16),
               const Text(
-                'Understand how well your relationship\nis truly aligned — across every dimension that matters.',
+                'In 2 minutes, know exactly where your relationship stands — scored, graded, and broken down pillar by pillar.',
                 textAlign: TextAlign.center,
                 style: TextStyle(fontSize: 17, color: kTextSub, height: 1.5),
+              ),
+              const SizedBox(height: 8),
+              const Text(
+                'Most people are surprised by at least one result.',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                    fontSize: 14, color: kBrand, fontWeight: FontWeight.w600),
               ),
               const Spacer(),
               const AlignCard(
@@ -2619,7 +2630,7 @@ class LensSelectionPage extends StatelessWidget {
               ),
               const SizedBox(height: 6),
               const Text(
-                'Your lens shapes how questions and insights\nare framed for you.',
+                'Choose the perspective you want to reflect from.\nThis shapes how questions and insights are framed.',
                 style: TextStyle(fontSize: 14, color: kTextSub, height: 1.5),
               ),
               const SizedBox(height: 32),
@@ -2802,8 +2813,33 @@ class _AssessmentPageState extends State<AssessmentPage> {
       ),
       body: ListView.builder(
         padding: const EdgeInsets.fromLTRB(20, 16, 20, 100),
-        itemCount: pillars.length,
-        itemBuilder: (context, i) {
+        itemCount: pillars.length + 1,
+        itemBuilder: (context, index) {
+          if (index == 0) {
+            return const Padding(
+              padding: EdgeInsets.only(bottom: 14),
+              child: AlignCard(
+                color: kBrandLight,
+                padding: EdgeInsets.all(14),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Icon(Icons.lightbulb_outline_rounded,
+                        size: 18, color: kBrand),
+                    SizedBox(width: 10),
+                    Expanded(
+                      child: Text(
+                        'Rate each pillar honestly — there are no right answers. Most people find at least one pillar surprises them.',
+                        style: TextStyle(
+                            fontSize: 13, color: kBrandDark, height: 1.5),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          }
+          final i = index - 1;
           final isTouched = touched.contains(i);
           return Padding(
             padding: const EdgeInsets.only(bottom: 14),
@@ -2996,6 +3032,29 @@ class InsightEngine {
     return insights[3];
   }
 
+  static String strongest(String name, double value) {
+    if (value >= 8) {
+      return '$name is your anchor. It is carrying a lot of weight in this relationship.';
+    }
+    if (value >= 6) {
+      return '$name is your best-scoring pillar, but it is not yet a firm anchor.';
+    }
+    return '$name scored highest, but even your strongest pillar is under strain.';
+  }
+
+  static String weakest(String name, double value) {
+    if (value >= 8) {
+      return '$name scored lowest, yet it is still strong. This relationship is well balanced.';
+    }
+    if (value >= 6) {
+      return '$name is the pillar to nurture first. Small, consistent effort here will pay off.';
+    }
+    if (value >= 4) {
+      return '$name is unstable. It is the area most likely to cause friction if left alone.';
+    }
+    return '$name is critically weak. It needs focused attention before anything else.';
+  }
+
   static String pillar(String name, double value) {
     if (value >= 8) return '$name is a strong pillar of this relationship.';
     if (value >= 6) return '$name is present but could be more consistent.';
@@ -3007,36 +3066,71 @@ class InsightEngine {
 // ─────────────────────────────────────────────────────────────────────────────
 // RADAR CHART
 // ─────────────────────────────────────────────────────────────────────────────
+// Short labels for the share card (full names clip on a 320px-wide card)
+const List<String> kShortPillars = [
+  'Trust',
+  'Respect',
+  'Support',
+  'Values',
+  'Comms',
+  'Intimacy',
+  'Future',
+];
+
 class PillarRadarChart extends StatelessWidget {
   final List<double> scores;
-  const PillarRadarChart({super.key, required this.scores});
+  final double? height; // null = fill parent (used by the share card)
+  final bool compact; // true = share card styling
+
+  const PillarRadarChart({
+    super.key,
+    required this.scores,
+    this.height = 300,
+    this.compact = false,
+  });
+
+  // Invisible dataset that pins the chart scale (0-10) so the shape is honest
+  RadarDataSet _pin(double v) => RadarDataSet(
+        dataEntries: List.generate(pillars.length, (_) => RadarEntry(value: v)),
+        borderColor: Colors.transparent,
+        fillColor: Colors.transparent,
+        borderWidth: 0,
+        entryRadius: 0,
+      );
 
   @override
   Widget build(BuildContext context) {
-    return SizedBox(
-      height: 300,
-      child: RadarChart(
-        RadarChartData(
-          radarShape: RadarShape.circle,
-          tickCount: 5,
-          radarBorderData: const BorderSide(color: kBorder),
-          gridBorderData: const BorderSide(color: kBorder),
-          getTitle: (index, angle) =>
-              RadarChartTitle(text: pillars[index], angle: angle),
-          dataSets: [
-            RadarDataSet(
-              dataEntries: scores.map((e) => RadarEntry(value: e)).toList(),
-              borderColor: kBrand,
-              fillColor: kBrand.withValues(alpha: 0.15),
-              borderWidth: 2.5,
-              entryRadius: 4,
-            ),
-          ],
-          tickBorderData: const BorderSide(color: kBorder, width: 1),
-          titleTextStyle: const TextStyle(fontSize: 11, color: kTextSub),
+    final chart = RadarChart(
+      RadarChartData(
+        radarShape: RadarShape.circle,
+        tickCount: 5,
+        // No numeric tick labels anywhere on the free chart
+        ticksTextStyle: const TextStyle(color: Colors.transparent, fontSize: 1),
+        radarBorderData: const BorderSide(color: kBorder),
+        gridBorderData: const BorderSide(color: kBorder),
+        tickBorderData: const BorderSide(color: kBorder, width: 1),
+        titleTextStyle: TextStyle(
+          fontSize: compact ? 10.5 : 11,
+          color: kTextSub,
+          fontWeight: compact ? FontWeight.w600 : FontWeight.w400,
         ),
+        getTitle: (index, angle) => compact
+            ? RadarChartTitle(text: kShortPillars[index])
+            : RadarChartTitle(text: pillars[index], angle: angle),
+        dataSets: [
+          _pin(0),
+          _pin(10),
+          RadarDataSet(
+            dataEntries: scores.map((e) => RadarEntry(value: e)).toList(),
+            borderColor: kBrand,
+            fillColor: kBrand.withValues(alpha: 0.18),
+            borderWidth: 2.5,
+            entryRadius: compact ? 3 : 4,
+          ),
+        ],
       ),
     );
+    return height == null ? chart : SizedBox(height: height, child: chart);
   }
 }
 
@@ -3088,6 +3182,290 @@ Widget pillarAuthorityChart(List<double> scores) {
       );
     }),
   );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SHARE SERVICE + SHARE CARD
+// ─────────────────────────────────────────────────────────────────────────────
+class ShareService {
+  static const playUrl =
+      'https://play.google.com/store/apps/details?id=com.alignapp.adeseye';
+
+  static String text(double pct, String grade, String lensLabel) =>
+      'I scored ${pct.toStringAsFixed(0)}% (Grade $grade) on Align — $lensLabel. '
+      'How aligned is your relationship?\n$playUrl';
+
+  /// Captures the RepaintBoundary as a 1080px-wide PNG and opens the share sheet.
+  static Future<void> shareCard({
+    required GlobalKey boundaryKey,
+    required String text,
+  }) async {
+    final ctx = boundaryKey.currentContext;
+    if (ctx == null) throw StateError('Share card not mounted');
+    final boundary = ctx.findRenderObject() as RenderRepaintBoundary;
+    final ratio = 1080 / boundary.size.width; // always 1080 x 1920 output
+    final ui.Image image = await boundary.toImage(pixelRatio: ratio);
+    final ByteData? data =
+        await image.toByteData(format: ui.ImageByteFormat.png);
+    image.dispose();
+    if (data == null) throw StateError('PNG encode failed');
+    final Uint8List bytes = data.buffer.asUint8List();
+
+    await SharePlus.instance.share(
+      ShareParams(
+        text: text,
+        files: [
+          XFile.fromData(bytes, mimeType: 'image/png', name: 'align_result.png')
+        ],
+        fileNameOverrides: ['align_result.png'],
+      ),
+    );
+  }
+}
+
+class ShareCard extends StatelessWidget {
+  static const double width = 320;
+  static const double height = 568; // 9:16 — Stories friendly
+
+  final double percentage;
+  final String grade;
+  final Color gradeColor;
+  final String lensLabel;
+  final List<double> scores;
+
+  const ShareCard({
+    super.key,
+    required this.percentage,
+    required this.grade,
+    required this.gradeColor,
+    required this.lensLabel,
+    required this.scores,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    // Ignore the user's system font scale so the captured image is consistent
+    return MediaQuery(
+      data: MediaQuery.of(context).copyWith(textScaler: TextScaler.noScaling),
+      child: Container(
+        width: width,
+        height: height,
+        padding: const EdgeInsets.fromLTRB(24, 26, 24, 22),
+        decoration: const BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            colors: [kBrandLight, kBackground],
+          ),
+        ),
+        child: Column(
+          children: [
+            Image.asset('assets/images/Align-Logo.png',
+                height: 44, fit: BoxFit.contain),
+            const SizedBox(height: 12),
+            const Text(
+              'MY RELATIONSHIP ALIGNMENT',
+              style: TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.w700,
+                letterSpacing: 1.4,
+                color: kBrandDark,
+              ),
+            ),
+            const SizedBox(height: 4),
+            Text(lensLabel,
+                style: const TextStyle(fontSize: 12, color: kTextSub)),
+            const SizedBox(height: 8),
+            Expanded(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 8),
+                child: PillarRadarChart(
+                    scores: scores, height: null, compact: true),
+              ),
+            ),
+            const SizedBox(height: 8),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Container(
+                  width: 64,
+                  height: 64,
+                  decoration: BoxDecoration(
+                    color: gradeColor,
+                    borderRadius: BorderRadius.circular(16),
+                  ),
+                  child: Center(
+                    child: Text(
+                      grade,
+                      style: const TextStyle(
+                        fontSize: 32,
+                        fontWeight: FontWeight.w800,
+                        color: kSurface,
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 16),
+                Text(
+                  '${percentage.toStringAsFixed(0)}%',
+                  style: TextStyle(
+                    fontSize: 48,
+                    fontWeight: FontWeight.w800,
+                    color: gradeColor,
+                    letterSpacing: -1.5,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 14),
+            const Text(
+              'How aligned is your relationship?',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                  fontSize: 15,
+                  fontWeight: FontWeight.w700,
+                  color: kTextPrimary),
+            ),
+            const SizedBox(height: 4),
+            const Text(
+              'Take the 2-minute assessment — free on Google Play',
+              textAlign: TextAlign.center,
+              style: TextStyle(fontSize: 11.5, color: kTextSub),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class ShareCardPage extends StatefulWidget {
+  final double percentage;
+  final String grade;
+  final Color gradeColor;
+  final String lensLabel;
+  final List<double> scores;
+
+  const ShareCardPage({
+    super.key,
+    required this.percentage,
+    required this.grade,
+    required this.gradeColor,
+    required this.lensLabel,
+    required this.scores,
+  });
+
+  @override
+  State<ShareCardPage> createState() => _ShareCardPageState();
+}
+
+class _ShareCardPageState extends State<ShareCardPage> {
+  final GlobalKey _boundaryKey = GlobalKey();
+  bool _ready = false;
+  bool _sharing = false;
+  bool _precacheStarted = false;
+
+  String get _text =>
+      ShareService.text(widget.percentage, widget.grade, widget.lensLabel);
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (_precacheStarted) return;
+    _precacheStarted = true;
+    // Make sure the logo is decoded before the user can capture the card
+    precacheImage(const AssetImage('assets/images/Align-Logo.png'), context)
+        .catchError((_) {})
+        .whenComplete(() {
+      if (mounted) setState(() => _ready = true);
+    });
+  }
+
+  Future<void> _share() async {
+    if (_sharing) return;
+    setState(() => _sharing = true);
+    try {
+      await ShareService.shareCard(boundaryKey: _boundaryKey, text: _text);
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Could not create the image. Sharing text instead.'),
+            backgroundColor: kScoreAmber,
+          ),
+        );
+      }
+      await SharePlus.instance.share(ShareParams(text: _text));
+    }
+    if (mounted) setState(() => _sharing = false);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: Row(
+          children: [
+            Image.asset('assets/images/Align-Logo.png',
+                height: 30, fit: BoxFit.contain),
+            const SizedBox(width: 8),
+            const Text('Align',
+                style: TextStyle(
+                    color: kBrand, fontSize: 18, fontWeight: FontWeight.w800)),
+          ],
+        ),
+      ),
+      body: SafeArea(
+        child: Column(
+          children: [
+            Expanded(
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Center(
+                  child: FittedBox(
+                    fit: BoxFit.contain,
+                    child: RepaintBoundary(
+                      key: _boundaryKey,
+                      child: ShareCard(
+                        percentage: widget.percentage,
+                        grade: widget.grade,
+                        gradeColor: widget.gradeColor,
+                        lensLabel: widget.lensLabel,
+                        scores: widget.scores,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 0, 20, 12),
+              child: Column(
+                children: [
+                  SizedBox(
+                    width: double.infinity,
+                    child: AlignButton(
+                      label: _sharing ? 'Preparing...' : 'Share Image',
+                      icon: Icons.share_rounded,
+                      onPressed: (_ready && !_sharing) ? _share : null,
+                    ),
+                  ),
+                  TextButton(
+                    onPressed: _sharing
+                        ? null
+                        : () =>
+                            SharePlus.instance.share(ShareParams(text: _text)),
+                    child: const Text('Share text only',
+                        style: TextStyle(fontSize: 13, color: kTextSub)),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -3164,6 +3542,21 @@ class _ResultsPageState extends State<ResultsPage> {
     if (p >= 70) return kScoreGreen;
     if (p >= 50) return kScoreAmber;
     return kScoreRed;
+  }
+
+  String get gradeDescription {
+    switch (grade) {
+      case 'A':
+        return 'Strongly aligned. Protect what is working and keep investing in it.';
+      case 'B':
+        return 'A healthy foundation with room to grow. A few focused changes will lift it further.';
+      case 'C':
+        return 'Alignment is uneven. Intentional effort will make a real difference.';
+      case 'D':
+        return 'Several areas need attention. An honest conversation is the place to start.';
+      default:
+        return 'This relationship is under real strain. Consider talking it through with your partner or a qualified professional.';
+    }
   }
 
   String get lensLabel {
@@ -3339,6 +3732,47 @@ class _ResultsPageState extends State<ResultsPage> {
                   ),
                 ),
 
+                const SizedBox(height: 10),
+
+                // ── GRADE DESCRIPTION BANNER ─────────────────────────────────
+                AlignCard(
+                  color: gradeColor.withValues(alpha: 0.08),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                  child: Text(
+                    'Grade $grade — $gradeDescription',
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                      height: 1.45,
+                      color:
+                          gradeColor == kScoreGreen ? kBrandDark : gradeColor,
+                    ),
+                  ),
+                ),
+
+                const SizedBox(height: 14),
+
+                // ── FREE RADAR ───────────────────────────────────────────────
+                AlignCard(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const SectionHeading('Relationship Structure Map'),
+                      PillarRadarChart(scores: widget.scores),
+                      if (!isPremium)
+                        const Padding(
+                          padding: EdgeInsets.only(top: 6),
+                          child: Text(
+                            'Unlock exact scores, stability ratings and deeper insight with Pro.',
+                            style: TextStyle(
+                                fontSize: 12, color: kTextSub, height: 1.4),
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+
                 const SizedBox(height: 14),
 
                 // ── KEY OBSERVATIONS ─────────────────────────────────────────
@@ -3350,7 +3784,7 @@ class _ResultsPageState extends State<ResultsPage> {
                       _observationRow(
                         Icons.arrow_upward_rounded,
                         kScoreGreen,
-                        InsightEngine.pillar(
+                        InsightEngine.strongest(
                           pillars[widget.scores.indexOf(maxScore)],
                           maxScore,
                         ),
@@ -3359,7 +3793,7 @@ class _ResultsPageState extends State<ResultsPage> {
                       _observationRow(
                         Icons.arrow_downward_rounded,
                         kScoreRed,
-                        InsightEngine.pillar(
+                        InsightEngine.weakest(
                           pillars[widget.scores.indexOf(minScore)],
                           minScore,
                         ),
@@ -3372,16 +3806,6 @@ class _ResultsPageState extends State<ResultsPage> {
 
                 // ── PREMIUM CONTENT ──────────────────────────────────────────
                 if (isPremium) ...[
-                  AlignCard(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        const SectionHeading('Relationship Structure Map'),
-                        PillarRadarChart(scores: widget.scores),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(height: 14),
                   AlignCard(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
@@ -3456,8 +3880,8 @@ class _ResultsPageState extends State<ResultsPage> {
                             ),
                             const SizedBox(height: 6),
                             const Text(
-                              'Get the radar map, alignment distribution, pillar stability '
-                              'ratings, and a full structural insight into your relationship.',
+                              'Get your exact pillar scores, alignment distribution, '
+                              'stability ratings and a full structural insight into your relationship.',
                               style: TextStyle(
                                   fontSize: 13, color: kTextSub, height: 1.5),
                             ),
@@ -3515,12 +3939,16 @@ class _ResultsPageState extends State<ResultsPage> {
                     label: 'Share My Result',
                     icon: Icons.share_rounded,
                     onPressed: () {
-                      SharePlus.instance.share(
-                        ShareParams(
-                          text:
-                              'I scored ${widget.percentage.toStringAsFixed(0)}% '
-                              '(Grade $grade) on Align — $lensLabel. '
-                              'How aligned is your relationship?',
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => ShareCardPage(
+                            percentage: widget.percentage,
+                            grade: grade,
+                            gradeColor: gradeColor,
+                            lensLabel: lensLabel,
+                            scores: widget.scores,
+                          ),
                         ),
                       );
                     },
@@ -3819,11 +4247,9 @@ class _PaywallPageState extends State<PaywallPage> {
                       child: Column(
                         children: const [
                           _FeatureRow(
-                              icon: Icons.radar_rounded,
-                              text: 'Relationship Structure Radar Map'),
-                          _FeatureRow(
                               icon: Icons.bar_chart_rounded,
-                              text: 'Alignment Distribution Chart'),
+                              text:
+                                  'Exact Pillar Scores & Alignment Distribution'),
                           _FeatureRow(
                               icon: Icons.verified_rounded,
                               text: 'Pillar Stability Ratings'),
