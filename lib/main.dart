@@ -3032,6 +3032,16 @@ class InsightEngine {
     return insights[3];
   }
 
+  static String evenly(double value) {
+    if (value >= 8) {
+      return 'You rated every pillar the same, and it is high. This relationship is strong across the board.';
+    }
+    if (value >= 6) {
+      return 'You rated every pillar the same. No single pillar stands out, so look at which ones feel most important to you.';
+    }
+    return 'You rated every pillar the same, and it is low. Start with the pillar that matters most to you.';
+  }
+
   static String strongest(String name, double value) {
     if (value >= 8) {
       return '$name is your anchor. It is carrying a lot of weight in this relationship.';
@@ -3110,13 +3120,11 @@ class PillarRadarChart extends StatelessWidget {
         gridBorderData: const BorderSide(color: kBorder),
         tickBorderData: const BorderSide(color: kBorder, width: 1),
         titleTextStyle: TextStyle(
-          fontSize: compact ? 10.5 : 11,
+          fontSize: compact ? 10.5 : 12,
           color: kTextSub,
-          fontWeight: compact ? FontWeight.w600 : FontWeight.w400,
+          fontWeight: FontWeight.w600,
         ),
-        getTitle: (index, angle) => compact
-            ? RadarChartTitle(text: kShortPillars[index])
-            : RadarChartTitle(text: pillars[index], angle: angle),
+        getTitle: (index, angle) => RadarChartTitle(text: kShortPillars[index]),
         dataSets: [
           _pin(0),
           _pin(10),
@@ -3130,7 +3138,12 @@ class PillarRadarChart extends StatelessWidget {
         ],
       ),
     );
-    return height == null ? chart : SizedBox(height: height, child: chart);
+    // In-app chart gets side padding so labels never touch the card border
+    final padded = compact
+        ? chart
+        : Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16), child: chart);
+    return height == null ? padded : SizedBox(height: height, child: padded);
   }
 }
 
@@ -3260,8 +3273,11 @@ class ShareCard extends StatelessWidget {
         ),
         child: Column(
           children: [
-            Image.asset('assets/images/Align-Logo.png',
-                height: 44, fit: BoxFit.contain),
+            ClipRRect(
+              borderRadius: BorderRadius.circular(10),
+              child: Image.asset('assets/images/Align-Logo.png',
+                  height: 44, fit: BoxFit.contain),
+            ),
             const SizedBox(height: 12),
             const Text(
               'MY RELATIONSHIP ALIGNMENT',
@@ -3328,7 +3344,7 @@ class ShareCard extends StatelessWidget {
             ),
             const SizedBox(height: 4),
             const Text(
-              'Take the 2-minute assessment — free on Google Play',
+              'Free 2-minute assessment on Google Play',
               textAlign: TextAlign.center,
               style: TextStyle(fontSize: 11.5, color: kTextSub),
             ),
@@ -3736,7 +3752,9 @@ class _ResultsPageState extends State<ResultsPage> {
 
                 // ── GRADE DESCRIPTION BANNER ─────────────────────────────────
                 AlignCard(
-                  color: gradeColor.withValues(alpha: 0.08),
+                  color: gradeColor == kScoreGreen
+                      ? kBrandLight
+                      : gradeColor.withValues(alpha: 0.08),
                   padding:
                       const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
                   child: Text(
@@ -3746,7 +3764,7 @@ class _ResultsPageState extends State<ResultsPage> {
                       fontWeight: FontWeight.w600,
                       height: 1.45,
                       color:
-                          gradeColor == kScoreGreen ? kBrandDark : gradeColor,
+                          gradeColor == kScoreGreen ? kBrandDark : kTextPrimary,
                     ),
                   ),
                 ),
@@ -3781,23 +3799,31 @@ class _ResultsPageState extends State<ResultsPage> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       const SectionHeading('Key Observations'),
-                      _observationRow(
-                        Icons.arrow_upward_rounded,
-                        kScoreGreen,
-                        InsightEngine.strongest(
-                          pillars[widget.scores.indexOf(maxScore)],
-                          maxScore,
+                      if (maxScore == minScore)
+                        _observationRow(
+                          Icons.balance_rounded,
+                          kBrand,
+                          InsightEngine.evenly(maxScore),
+                        )
+                      else ...[
+                        _observationRow(
+                          Icons.arrow_upward_rounded,
+                          kScoreGreen,
+                          InsightEngine.strongest(
+                            pillars[widget.scores.indexOf(maxScore)],
+                            maxScore,
+                          ),
                         ),
-                      ),
-                      const SizedBox(height: 10),
-                      _observationRow(
-                        Icons.arrow_downward_rounded,
-                        kScoreRed,
-                        InsightEngine.weakest(
-                          pillars[widget.scores.indexOf(minScore)],
-                          minScore,
+                        const SizedBox(height: 10),
+                        _observationRow(
+                          Icons.arrow_downward_rounded,
+                          kScoreRed,
+                          InsightEngine.weakest(
+                            pillars[widget.scores.indexOf(minScore)],
+                            minScore,
+                          ),
                         ),
-                      ),
+                      ],
                     ],
                   ),
                 ),
