@@ -328,6 +328,13 @@ class _OnboardingPageState extends State<OnboardingPage> {
         setState(() => _supabaseReady = true);
         supabase.auth.onAuthStateChange.listen((data) {
           if (mounted) setState(() {});
+          // Handle password recovery event — route to reset screen
+          if (data.event == AuthChangeEvent.passwordRecovery) {
+            if (!mounted) return;
+            Navigator.of(context).push(
+              MaterialPageRoute(builder: (_) => const ResetPasswordPage()),
+            );
+          }
         });
       }
     } catch (_) {
@@ -502,6 +509,483 @@ class _AuthPageState extends State<AuthPage> {
     super.dispose();
   }
 
+  Future<void> _showForgotPassword(BuildContext context) async {
+    final resetEmailController = TextEditingController();
+    final otpController = TextEditingController();
+    final newPasswordController = TextEditingController();
+    final confirmPasswordController = TextEditingController();
+
+    // Steps: 0 = enter email, 1 = enter OTP, 2 = enter new password
+    int step = 0;
+    String? feedbackMessage;
+    bool isError = false;
+    bool loading = false;
+    bool obscurePassword = true;
+    bool obscureConfirm = true;
+    String submittedEmail = '';
+
+    await showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialogState) {
+          // ── STEP 0 — Enter Email ──────────────────────────────────────────
+          if (step == 0) {
+            return AlertDialog(
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(16)),
+              title: const Text('Reset Password',
+                  style: TextStyle(
+                      fontSize: 17,
+                      fontWeight: FontWeight.w700,
+                      color: kTextPrimary)),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'Enter your email address. We will send you a 6-digit code to reset your password.',
+                    style:
+                        TextStyle(fontSize: 13, color: kTextSub, height: 1.5),
+                  ),
+                  const SizedBox(height: 16),
+                  TextField(
+                    controller: resetEmailController,
+                    keyboardType: TextInputType.emailAddress,
+                    autocorrect: false,
+                    decoration: InputDecoration(
+                      labelText: 'Email',
+                      labelStyle: const TextStyle(color: kTextSub),
+                      filled: true,
+                      fillColor: kSurface,
+                      border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                          borderSide: const BorderSide(color: kBorder)),
+                      enabledBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                          borderSide: const BorderSide(color: kBorder)),
+                      focusedBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                          borderSide:
+                              const BorderSide(color: kBrand, width: 2)),
+                    ),
+                  ),
+                  if (feedbackMessage != null) ...[
+                    const SizedBox(height: 12),
+                    Container(
+                      padding: const EdgeInsets.all(10),
+                      decoration: BoxDecoration(
+                        color: isError
+                            ? kScoreRed.withValues(alpha: 0.08)
+                            : kBrandLight,
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(
+                          color: isError
+                              ? kScoreRed.withValues(alpha: 0.3)
+                              : kBrand.withValues(alpha: 0.3),
+                        ),
+                      ),
+                      child: Text(feedbackMessage!,
+                          style: TextStyle(
+                              fontSize: 12,
+                              color: isError ? kScoreRed : kBrandDark,
+                              height: 1.4)),
+                    ),
+                  ],
+                ],
+              ),
+              actions: [
+                TextButton(
+                  onPressed: loading ? null : () => Navigator.pop(ctx),
+                  child:
+                      const Text('Cancel', style: TextStyle(color: kTextSub)),
+                ),
+                TextButton(
+                  onPressed: loading
+                      ? null
+                      : () async {
+                          final email = resetEmailController.text.trim();
+                          if (email.isEmpty) {
+                            setDialogState(() {
+                              feedbackMessage =
+                                  'Please enter your email address.';
+                              isError = true;
+                            });
+                            return;
+                          }
+                          setDialogState(() {
+                            loading = true;
+                            feedbackMessage = null;
+                          });
+                          try {
+                            await supabase.auth.resetPasswordForEmail(
+                              email,
+                            );
+                            submittedEmail = email;
+                            setDialogState(() {
+                              step = 1;
+                              loading = false;
+                              feedbackMessage = null;
+                              isError = false;
+                            });
+                          } catch (e) {
+                            setDialogState(() {
+                              feedbackMessage =
+                                  'Could not send code. Please check the email and try again.';
+                              isError = true;
+                              loading = false;
+                            });
+                          }
+                        },
+                  child: loading
+                      ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(
+                              strokeWidth: 2, color: kBrand))
+                      : const Text('Send Code',
+                          style: TextStyle(
+                              color: kBrand, fontWeight: FontWeight.w700)),
+                ),
+              ],
+            );
+          }
+
+          // ── STEP 1 — Enter OTP ───────────────────────────────────────────
+          if (step == 1) {
+            return AlertDialog(
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(16)),
+              title: const Text('Enter Code',
+                  style: TextStyle(
+                      fontSize: 17,
+                      fontWeight: FontWeight.w700,
+                      color: kTextPrimary)),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'A 6-digit code was sent to $submittedEmail. Enter it below.',
+                    style:
+                        TextStyle(fontSize: 13, color: kTextSub, height: 1.5),
+                  ),
+                  const SizedBox(height: 16),
+                  TextField(
+                    controller: otpController,
+                    keyboardType: TextInputType.number,
+                    maxLength: 6,
+                    decoration: InputDecoration(
+                      labelText: '6-digit code',
+                      labelStyle: const TextStyle(color: kTextSub),
+                      filled: true,
+                      fillColor: kSurface,
+                      counterText: '',
+                      border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                          borderSide: const BorderSide(color: kBorder)),
+                      enabledBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                          borderSide: const BorderSide(color: kBorder)),
+                      focusedBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                          borderSide:
+                              const BorderSide(color: kBrand, width: 2)),
+                    ),
+                  ),
+                  if (feedbackMessage != null) ...[
+                    const SizedBox(height: 12),
+                    Container(
+                      padding: const EdgeInsets.all(10),
+                      decoration: BoxDecoration(
+                        color: isError
+                            ? kScoreRed.withValues(alpha: 0.08)
+                            : kBrandLight,
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(
+                          color: isError
+                              ? kScoreRed.withValues(alpha: 0.3)
+                              : kBrand.withValues(alpha: 0.3),
+                        ),
+                      ),
+                      child: Text(feedbackMessage!,
+                          style: TextStyle(
+                              fontSize: 12,
+                              color: isError ? kScoreRed : kBrandDark,
+                              height: 1.4)),
+                    ),
+                  ],
+                  const SizedBox(height: 8),
+                  GestureDetector(
+                    onTap: loading
+                        ? null
+                        : () async {
+                            setDialogState(() => loading = true);
+                            try {
+                              await supabase.auth.resetPasswordForEmail(
+                                submittedEmail,
+                              );
+                              setDialogState(() {
+                                feedbackMessage = 'New code sent.';
+                                isError = false;
+                                loading = false;
+                              });
+                            } catch (_) {
+                              setDialogState(() {
+                                feedbackMessage =
+                                    'Could not resend. Try again.';
+                                isError = true;
+                                loading = false;
+                              });
+                            }
+                          },
+                    child: const Text(
+                      'Resend code',
+                      style: TextStyle(
+                          fontSize: 12,
+                          color: kBrand,
+                          fontWeight: FontWeight.w600),
+                    ),
+                  ),
+                ],
+              ),
+              actions: [
+                TextButton(
+                  onPressed: loading
+                      ? null
+                      : () => setDialogState(() {
+                            step = 0;
+                            feedbackMessage = null;
+                            otpController.clear();
+                          }),
+                  child: const Text('Back', style: TextStyle(color: kTextSub)),
+                ),
+                TextButton(
+                  onPressed: loading
+                      ? null
+                      : () async {
+                          final otp = otpController.text.trim();
+                          if (otp.length != 6) {
+                            setDialogState(() {
+                              feedbackMessage =
+                                  'Please enter the full 6-digit code.';
+                              isError = true;
+                            });
+                            return;
+                          }
+                          setDialogState(() {
+                            loading = true;
+                            feedbackMessage = null;
+                          });
+                          try {
+                            await supabase.auth.verifyOTP(
+                              email: submittedEmail,
+                              token: otp,
+                              type: OtpType.recovery,
+                            );
+                            setDialogState(() {
+                              step = 2;
+                              loading = false;
+                              feedbackMessage = null;
+                              isError = false;
+                            });
+                          } catch (e) {
+                            setDialogState(() {
+                              feedbackMessage =
+                                  'Invalid or expired code. Please try again or resend.';
+                              isError = true;
+                              loading = false;
+                            });
+                          }
+                        },
+                  child: loading
+                      ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(
+                              strokeWidth: 2, color: kBrand))
+                      : const Text('Verify',
+                          style: TextStyle(
+                              color: kBrand, fontWeight: FontWeight.w700)),
+                ),
+              ],
+            );
+          }
+
+          // ── STEP 2 — Enter New Password ──────────────────────────────────
+          return AlertDialog(
+            shape:
+                RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+            title: const Text('Set New Password',
+                style: TextStyle(
+                    fontSize: 17,
+                    fontWeight: FontWeight.w700,
+                    color: kTextPrimary)),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Enter your new password. Must be at least 8 characters.',
+                  style: TextStyle(fontSize: 13, color: kTextSub, height: 1.5),
+                ),
+                const SizedBox(height: 16),
+                TextField(
+                  controller: newPasswordController,
+                  obscureText: obscurePassword,
+                  decoration: InputDecoration(
+                    labelText: 'New Password',
+                    labelStyle: const TextStyle(color: kTextSub),
+                    filled: true,
+                    fillColor: kSurface,
+                    border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        borderSide: const BorderSide(color: kBorder)),
+                    enabledBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        borderSide: const BorderSide(color: kBorder)),
+                    focusedBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        borderSide: const BorderSide(color: kBrand, width: 2)),
+                    suffixIcon: IconButton(
+                      icon: Icon(
+                          obscurePassword
+                              ? Icons.visibility_off_outlined
+                              : Icons.visibility_outlined,
+                          color: kTextSub),
+                      onPressed: () => setDialogState(
+                          () => obscurePassword = !obscurePassword),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: confirmPasswordController,
+                  obscureText: obscureConfirm,
+                  decoration: InputDecoration(
+                    labelText: 'Confirm Password',
+                    labelStyle: const TextStyle(color: kTextSub),
+                    filled: true,
+                    fillColor: kSurface,
+                    border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        borderSide: const BorderSide(color: kBorder)),
+                    enabledBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        borderSide: const BorderSide(color: kBorder)),
+                    focusedBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        borderSide: const BorderSide(color: kBrand, width: 2)),
+                    suffixIcon: IconButton(
+                      icon: Icon(
+                          obscureConfirm
+                              ? Icons.visibility_off_outlined
+                              : Icons.visibility_outlined,
+                          color: kTextSub),
+                      onPressed: () => setDialogState(
+                          () => obscureConfirm = !obscureConfirm),
+                    ),
+                  ),
+                ),
+                if (feedbackMessage != null) ...[
+                  const SizedBox(height: 12),
+                  Container(
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(
+                      color: isError
+                          ? kScoreRed.withValues(alpha: 0.08)
+                          : kBrandLight,
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(
+                        color: isError
+                            ? kScoreRed.withValues(alpha: 0.3)
+                            : kBrand.withValues(alpha: 0.3),
+                      ),
+                    ),
+                    child: Text(feedbackMessage!,
+                        style: TextStyle(
+                            fontSize: 12,
+                            color: isError ? kScoreRed : kBrandDark,
+                            height: 1.4)),
+                  ),
+                ],
+              ],
+            ),
+            actions: [
+              TextButton(
+                onPressed: loading ? null : () => Navigator.pop(ctx),
+                child: const Text('Cancel', style: TextStyle(color: kTextSub)),
+              ),
+              TextButton(
+                onPressed: loading
+                    ? null
+                    : () async {
+                        final password = newPasswordController.text.trim();
+                        final confirm = confirmPasswordController.text.trim();
+                        if (password.length < 8) {
+                          setDialogState(() {
+                            feedbackMessage =
+                                'Password must be at least 8 characters.';
+                            isError = true;
+                          });
+                          return;
+                        }
+                        if (password != confirm) {
+                          setDialogState(() {
+                            feedbackMessage = 'Passwords do not match.';
+                            isError = true;
+                          });
+                          return;
+                        }
+                        setDialogState(() {
+                          loading = true;
+                          feedbackMessage = null;
+                        });
+                        try {
+                          await supabase.auth
+                              .updateUser(UserAttributes(password: password));
+                          await supabase.auth.signOut();
+                          if (!ctx.mounted) return;
+                          Navigator.pop(ctx);
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                              content: Text(
+                                  'Password updated successfully. Please sign in with your new password.'),
+                              backgroundColor: kBrand,
+                              duration: Duration(seconds: 4),
+                            ),
+                          );
+                        } catch (e) {
+                          setDialogState(() {
+                            feedbackMessage =
+                                'Could not update password. Please try again.';
+                            isError = true;
+                            loading = false;
+                          });
+                        }
+                      },
+                child: loading
+                    ? const SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(
+                            strokeWidth: 2, color: kBrand))
+                    : const Text('Update Password',
+                        style: TextStyle(
+                            color: kBrand, fontWeight: FontWeight.w700)),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+
+    resetEmailController.dispose();
+    otpController.dispose();
+    newPasswordController.dispose();
+    confirmPasswordController.dispose();
+  }
+
   Future<void> _submit() async {
     final email = _emailController.text.trim();
     final password = _passwordController.text.trim();
@@ -529,6 +1013,13 @@ class _AuthPageState extends State<AuthPage> {
               _errorMessage = 'Sign in failed. Please check your details.');
         }
       } else {
+        if (password.length < 8) {
+          setState(() {
+            _loading = false;
+            _errorMessage = 'Password must be at least 8 characters long.';
+          });
+          return;
+        }
         final response = await supabase.auth.signUp(
           email: email,
           password: password,
@@ -559,7 +1050,24 @@ class _AuthPageState extends State<AuthPage> {
         }
       }
     } catch (e) {
-      setState(() => _errorMessage = 'Something went wrong. Please try again.');
+      final errorString = e.toString().toLowerCase();
+      if (errorString.contains('invalid login credentials') ||
+          errorString.contains('invalid_credentials')) {
+        setState(() =>
+            _errorMessage = 'Incorrect email or password. Please try again.');
+      } else if (errorString.contains('email not confirmed')) {
+        setState(() => _errorMessage =
+            'Please confirm your email address before signing in. Check your inbox.');
+      } else if (errorString.contains('user not found')) {
+        setState(() => _errorMessage =
+            'No account found with this email. Please sign up first.');
+      } else if (errorString.contains('too many requests')) {
+        setState(() => _errorMessage =
+            'Too many attempts. Please wait a few minutes and try again.');
+      } else {
+        setState(
+            () => _errorMessage = 'Something went wrong. Please try again.');
+      }
     }
 
     setState(() => _loading = false);
@@ -660,6 +1168,17 @@ class _AuthPageState extends State<AuthPage> {
                   ),
                 ),
               ),
+              if (_isSignIn)
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: TextButton(
+                    onPressed: () => _showForgotPassword(context),
+                    child: const Text(
+                      'Forgot Password?',
+                      style: TextStyle(fontSize: 13, color: kBrand),
+                    ),
+                  ),
+                ),
               if (_errorMessage != null) ...[
                 const SizedBox(height: 12),
                 Container(
@@ -3520,6 +4039,263 @@ class _FeatureRow extends StatelessWidget {
           ),
         ],
       ),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// RESET PASSWORD PAGE
+// ─────────────────────────────────────────────────────────────────────────────
+class ResetPasswordPage extends StatefulWidget {
+  const ResetPasswordPage({super.key});
+
+  @override
+  State<ResetPasswordPage> createState() => _ResetPasswordPageState();
+}
+
+class _ResetPasswordPageState extends State<ResetPasswordPage> {
+  final _passwordController = TextEditingController();
+  final _confirmController = TextEditingController();
+  bool _obscurePassword = true;
+  bool _obscureConfirm = true;
+  bool _loading = false;
+  String? _errorMessage;
+  bool _success = false;
+
+  @override
+  void dispose() {
+    _passwordController.dispose();
+    _confirmController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _updatePassword() async {
+    final password = _passwordController.text.trim();
+    final confirm = _confirmController.text.trim();
+
+    if (password.isEmpty || confirm.isEmpty) {
+      setState(() => _errorMessage = 'Please fill in both fields.');
+      return;
+    }
+    if (password.length < 8) {
+      setState(() => _errorMessage = 'Password must be at least 8 characters.');
+      return;
+    }
+    if (password != confirm) {
+      setState(
+          () => _errorMessage = 'Passwords do not match. Please try again.');
+      return;
+    }
+
+    setState(() {
+      _loading = true;
+      _errorMessage = null;
+    });
+
+    try {
+      await supabase.auth.updateUser(UserAttributes(password: password));
+      await supabase.auth.signOut();
+      setState(() {
+        _success = true;
+        _loading = false;
+      });
+    } catch (e) {
+      setState(() {
+        _errorMessage =
+            'Could not update password. Please request a new reset link.';
+        _loading = false;
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: Row(
+          children: [
+            Image.asset('assets/images/Align-Logo.png',
+                height: 30, fit: BoxFit.contain),
+            const SizedBox(width: 8),
+            const Text('Align',
+                style: TextStyle(
+                    color: kBrand, fontSize: 18, fontWeight: FontWeight.w800)),
+          ],
+        ),
+      ),
+      body: SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 24),
+          child: _success ? _buildSuccess() : _buildForm(),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildForm() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text(
+          'Set New Password',
+          style: TextStyle(
+            fontSize: 26,
+            fontWeight: FontWeight.w800,
+            color: kTextPrimary,
+            letterSpacing: -0.5,
+          ),
+        ),
+        const SizedBox(height: 6),
+        const Text(
+          'Enter your new password below. Make sure it is at least 8 characters long.',
+          style: TextStyle(fontSize: 14, color: kTextSub, height: 1.5),
+        ),
+        const SizedBox(height: 32),
+        TextField(
+          controller: _passwordController,
+          obscureText: _obscurePassword,
+          decoration: InputDecoration(
+            labelText: 'New Password',
+            labelStyle: const TextStyle(color: kTextSub),
+            filled: true,
+            fillColor: kSurface,
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+              borderSide: const BorderSide(color: kBorder),
+            ),
+            enabledBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+              borderSide: const BorderSide(color: kBorder),
+            ),
+            focusedBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+              borderSide: const BorderSide(color: kBrand, width: 2),
+            ),
+            suffixIcon: IconButton(
+              icon: Icon(
+                _obscurePassword
+                    ? Icons.visibility_off_outlined
+                    : Icons.visibility_outlined,
+                color: kTextSub,
+              ),
+              onPressed: () =>
+                  setState(() => _obscurePassword = !_obscurePassword),
+            ),
+          ),
+        ),
+        const SizedBox(height: 14),
+        TextField(
+          controller: _confirmController,
+          obscureText: _obscureConfirm,
+          decoration: InputDecoration(
+            labelText: 'Confirm New Password',
+            labelStyle: const TextStyle(color: kTextSub),
+            filled: true,
+            fillColor: kSurface,
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+              borderSide: const BorderSide(color: kBorder),
+            ),
+            enabledBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+              borderSide: const BorderSide(color: kBorder),
+            ),
+            focusedBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+              borderSide: const BorderSide(color: kBrand, width: 2),
+            ),
+            suffixIcon: IconButton(
+              icon: Icon(
+                _obscureConfirm
+                    ? Icons.visibility_off_outlined
+                    : Icons.visibility_outlined,
+                color: kTextSub,
+              ),
+              onPressed: () =>
+                  setState(() => _obscureConfirm = !_obscureConfirm),
+            ),
+          ),
+        ),
+        if (_errorMessage != null) ...[
+          const SizedBox(height: 12),
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: kScoreRed.withValues(alpha: 0.08),
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: kScoreRed.withValues(alpha: 0.3)),
+            ),
+            child: Row(
+              children: [
+                const Icon(Icons.error_outline_rounded,
+                    color: kScoreRed, size: 16),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    _errorMessage!,
+                    style: const TextStyle(fontSize: 13, color: kScoreRed),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+        const SizedBox(height: 24),
+        SizedBox(
+          width: double.infinity,
+          child: AlignButton(
+            label: _loading ? 'Updating...' : 'Update Password',
+            onPressed: _loading ? null : _updatePassword,
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildSuccess() {
+    return Column(
+      mainAxisAlignment: MainAxisAlignment.center,
+      crossAxisAlignment: CrossAxisAlignment.center,
+      children: [
+        Container(
+          width: 72,
+          height: 72,
+          decoration: BoxDecoration(
+            color: kBrandLight,
+            shape: BoxShape.circle,
+          ),
+          child: const Icon(Icons.check_rounded, color: kBrand, size: 40),
+        ),
+        const SizedBox(height: 24),
+        const Text(
+          'Password Updated',
+          style: TextStyle(
+            fontSize: 24,
+            fontWeight: FontWeight.w800,
+            color: kTextPrimary,
+            letterSpacing: -0.5,
+          ),
+        ),
+        const SizedBox(height: 8),
+        const Text(
+          'Your password has been updated successfully. Please sign in with your new password.',
+          textAlign: TextAlign.center,
+          style: TextStyle(fontSize: 14, color: kTextSub, height: 1.5),
+        ),
+        const SizedBox(height: 32),
+        SizedBox(
+          width: double.infinity,
+          child: AlignButton(
+            label: 'Sign In',
+            onPressed: () {
+              Navigator.of(context).pushAndRemoveUntil(
+                MaterialPageRoute(builder: (_) => const OnboardingPage()),
+                (route) => false,
+              );
+            },
+          ),
+        ),
+      ],
     );
   }
 }
