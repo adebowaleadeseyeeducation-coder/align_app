@@ -1,8 +1,8 @@
-import 'dart:typed_data';
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter/foundation.dart' show kDebugMode, kReleaseMode;
 import 'package:share_plus/share_plus.dart';
 import 'package:fl_chart/fl_chart.dart';
@@ -3091,12 +3091,14 @@ class PillarRadarChart extends StatelessWidget {
   final List<double> scores;
   final double? height; // null = fill parent (used by the share card)
   final bool compact; // true = share card styling
+  final List<double>? compareScores; // partner shape (optional)
 
   const PillarRadarChart({
     super.key,
     required this.scores,
     this.height = 300,
     this.compact = false,
+    this.compareScores,
   });
 
   // Invisible dataset that pins the chart scale (0-10) so the shape is honest
@@ -3128,6 +3130,15 @@ class PillarRadarChart extends StatelessWidget {
         dataSets: [
           _pin(0),
           _pin(10),
+          if (compareScores != null)
+            RadarDataSet(
+              dataEntries:
+                  compareScores!.map((e) => RadarEntry(value: e)).toList(),
+              borderColor: kLensFeminine,
+              fillColor: kLensFeminine.withValues(alpha: 0.12),
+              borderWidth: 2.5,
+              entryRadius: 3,
+            ),
           RadarDataSet(
             dataEntries: scores.map((e) => RadarEntry(value: e)).toList(),
             borderColor: kBrand,
@@ -3485,6 +3496,726 @@ class _ShareCardPageState extends State<ShareCardPage> {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// PARTNER COMPARE — share code (no accounts, no backend)
+// ─────────────────────────────────────────────────────────────────────────────
+class PartnerCode {
+  final Lens lens;
+  final List<double> scores;
+  const PartnerCode(this.lens, this.scores);
+
+  static String _body(Lens lens, List<double> scores) {
+    final letter = lens == Lens.feminine
+        ? 'F'
+        : lens == Lens.masculine
+            ? 'M'
+            : 'U';
+    final b = StringBuffer(letter);
+    for (final s in scores) {
+      final v = s.round();
+      b.write(v >= 10 ? 'A' : v.toString());
+    }
+    return b.toString();
+  }
+
+  static int _check(String body) {
+    var sum = 0;
+    for (var i = 0; i < body.length; i++) {
+      sum += (i + 1) * body.codeUnitAt(i);
+    }
+    return sum % 97;
+  }
+
+  /// e.g. ALIGN-U5A37234-42
+  static String encode(Lens lens, List<double> scores) {
+    final body = _body(lens, scores);
+    return 'ALIGN-$body-${_check(body).toString().padLeft(2, '0')}';
+  }
+
+  /// Finds a code anywhere inside pasted text. Returns null if invalid.
+  static PartnerCode? decode(String input) {
+    final m = RegExp(r'ALIGN-([UFM][0-9A]{7})-(\d{2})', caseSensitive: false)
+        .firstMatch(input);
+    if (m == null) return null;
+    final body = m.group(1)!.toUpperCase();
+    final check = int.parse(m.group(2)!);
+    if (_check(body) != check) return null;
+    final lens = body[0] == 'F'
+        ? Lens.feminine
+        : body[0] == 'M'
+            ? Lens.masculine
+            : Lens.universal;
+    final scores = <double>[];
+    for (var i = 1; i < body.length; i++) {
+      final c = body[i];
+      scores.add(c == 'A' ? 10.0 : double.parse(c));
+    }
+    return PartnerCode(lens, scores);
+  }
+}
+
+class PartnerComparePage extends StatefulWidget {
+  final List<double> myScores;
+  final Lens myLens;
+  final bool isPremium;
+
+  const PartnerComparePage({
+    super.key,
+    required this.myScores,
+    required this.myLens,
+    required this.isPremium,
+  });
+
+  @override
+  State<PartnerComparePage> createState() => _PartnerComparePageState();
+}
+
+class _PartnerComparePageState extends State<PartnerComparePage> {
+  final TextEditingController _controller = TextEditingController();
+  PartnerCode? _partner;
+  String? _error;
+  late bool _premium;
+  final GlobalKey _resultKey = GlobalKey();
+
+  @override
+  void initState() {
+    super.initState();
+    _premium = widget.isPremium;
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  String _lensName(Lens l) => l.name[0].toUpperCase() + l.name.substring(1);
+
+  String _gapLabel(double g) =>
+      g <= 1 ? 'In sync' : (g <= 3 ? 'Some gap' : 'Big gap');
+
+  Color _gapColor(double g) =>
+      g <= 1 ? kScoreGreen : (g <= 3 ? kScoreAmber : kScoreRed);
+
+  String _matchBand(double m) {
+    if (m >= 85) return 'You see this relationship very similarly.';
+    if (m >= 70) return 'You mostly see eye to eye, with a few differences.';
+    if (m >= 55) {
+      return 'You see some things differently. That is worth talking about.';
+    }
+    return 'You see this relationship quite differently. A calm conversation is a good next step.';
+  }
+
+  Future<void> _paste() async {
+    final data = await Clipboard.getData(Clipboard.kTextPlain);
+    if (!mounted) return;
+    final text = data?.text;
+    if (text == null || text.trim().isEmpty) {
+      setState(
+          () => _error = "Nothing to paste. Copy your partner's code first.");
+      return;
+    }
+    _controller.text = text;
+    _compare();
+  }
+
+  void _compare() {
+    final decoded = PartnerCode.decode(_controller.text);
+    if (decoded == null) {
+      setState(() {
+        _partner = null;
+        _error = 'That code does not look right. Check it and try again.';
+      });
+      return;
+    }
+    FocusScope.of(context).unfocus();
+    setState(() {
+      _partner = decoded;
+      _error = null;
+    });
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final ctx = _resultKey.currentContext;
+      if (ctx != null) {
+        Scrollable.ensureVisible(
+          ctx,
+          duration: const Duration(milliseconds: 350),
+          curve: Curves.easeOut,
+        );
+      }
+    });
+  }
+
+  Future<void> _openPaywall() async {
+    final purchased = await Navigator.push<bool>(
+      context,
+      MaterialPageRoute(builder: (_) => const PaywallPage()),
+    );
+    if (purchased == true && mounted) setState(() => _premium = true);
+  }
+
+  Widget _legendDot(Color color, String label) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Container(
+          width: 10,
+          height: 10,
+          decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+        ),
+        const SizedBox(width: 5),
+        Text(label, style: const TextStyle(fontSize: 12, color: kTextSub)),
+      ],
+    );
+  }
+
+  List<Widget> _buildResult(PartnerCode partner) {
+    final mine = widget.myScores;
+    final theirs = partner.scores;
+    final gaps = List<double>.generate(
+        pillars.length, (i) => (mine[i] - theirs[i]).abs());
+    final totalGap = gaps.reduce((a, b) => a + b);
+    final match = (1 - totalGap / (pillars.length * 10)) * 100;
+    final maxGap = gaps.reduce((a, b) => a > b ? a : b);
+    final biggest = gaps.indexOf(maxGap);
+    final matchColor =
+        match >= 70 ? kScoreGreen : (match >= 55 ? kScoreAmber : kScoreRed);
+
+    return [
+      AlignCard(
+        color: kBrandLight,
+        child: Row(
+          children: [
+            Text(
+              '${match.toStringAsFixed(0)}%',
+              style: TextStyle(
+                fontSize: 44,
+                fontWeight: FontWeight.w800,
+                color: matchColor,
+                letterSpacing: -1.5,
+              ),
+            ),
+            const SizedBox(width: 16),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'How closely you agree',
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w700,
+                      color: kBrandDark,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    _matchBand(match),
+                    style: const TextStyle(
+                        fontSize: 13, color: kTextSub, height: 1.4),
+                  ),
+                  const SizedBox(height: 6),
+                  const Text(
+                    'This shows how closely your scores match, not how strong the relationship is.',
+                    style:
+                        TextStyle(fontSize: 11.5, color: kTextSub, height: 1.4),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+      const SizedBox(height: 14),
+      AlignCard(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const SectionHeading('Your shapes side by side'),
+            PillarRadarChart(scores: mine, compareScores: theirs),
+            const SizedBox(height: 8),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                _legendDot(kBrand, 'You'),
+                const SizedBox(width: 16),
+                _legendDot(kLensFeminine, 'Partner'),
+              ],
+            ),
+          ],
+        ),
+      ),
+      const SizedBox(height: 14),
+      AlignCard(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const SectionHeading('Where to start'),
+            Text(
+              maxGap <= 1
+                  ? 'You answered almost the same on every pillar. Keep checking in with each other.'
+                  : '${pillars[biggest]} is where you see things most differently. Start your conversation there.',
+              style: const TextStyle(
+                  fontSize: 14, color: kTextPrimary, height: 1.5),
+            ),
+            const SizedBox(height: 8),
+            const Text(
+              'A gap is not a verdict. It shows where a conversation could help, so go gently.',
+              style: TextStyle(fontSize: 12.5, color: kTextSub, height: 1.5),
+            ),
+          ],
+        ),
+      ),
+      if (partner.lens != widget.myLens) ...[
+        const SizedBox(height: 14),
+        AlignCard(
+          color: kBrandLight,
+          padding: const EdgeInsets.all(14),
+          child: Text(
+            'You used different lenses (${_lensName(widget.myLens)} and ${_lensName(partner.lens)}). '
+            'The scores are still comparable, but the questions were framed differently for each of you.',
+            style:
+                const TextStyle(fontSize: 12.5, color: kBrandDark, height: 1.5),
+          ),
+        ),
+      ],
+      const SizedBox(height: 14),
+      if (_premium) _buildBreakdown(mine, theirs, gaps) else _buildLocked(),
+    ];
+  }
+
+  Widget _buildBreakdown(
+      List<double> mine, List<double> theirs, List<double> gaps) {
+    return AlignCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const SectionHeading('Pillar by pillar'),
+          ...List.generate(pillars.length, (i) {
+            final g = gaps[i];
+            return Padding(
+              padding: const EdgeInsets.only(bottom: 12),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          pillars[i],
+                          style: const TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w500,
+                            color: kTextPrimary,
+                          ),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          'You ${mine[i].round()}  ·  Partner ${theirs[i].round()}',
+                          style: const TextStyle(fontSize: 12, color: kTextSub),
+                        ),
+                      ],
+                    ),
+                  ),
+                  Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: _gapColor(g).withValues(alpha: 0.12),
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: Text(
+                      _gapLabel(g),
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                        color: _gapColor(g),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            );
+          }),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildLocked() {
+    return AlignCard(
+      color: const Color(0xFFFDF9F0),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+            decoration: BoxDecoration(
+              color: kPremiumGold.withValues(alpha: 0.15),
+              borderRadius: BorderRadius.circular(20),
+            ),
+            child: const Text(
+              'PREMIUM',
+              style: TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.w700,
+                color: kPremiumGold,
+                letterSpacing: 0.8,
+              ),
+            ),
+          ),
+          const SizedBox(height: 12),
+          const Text(
+            'See the full breakdown',
+            style: TextStyle(
+                fontSize: 17, fontWeight: FontWeight.w700, color: kTextPrimary),
+          ),
+          const SizedBox(height: 6),
+          const Text(
+            'Pillar-by-pillar scores for both of you, with a clear read on every gap.',
+            style: TextStyle(fontSize: 13, color: kTextSub, height: 1.5),
+          ),
+          const SizedBox(height: 16),
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: kPremiumGold,
+                foregroundColor: kSurface,
+                elevation: 0,
+                padding: const EdgeInsets.symmetric(vertical: 14),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+              ),
+              onPressed: _openPaywall,
+              child: const Text(
+                'View Plans',
+                style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: Row(
+          children: [
+            Image.asset('assets/images/Align-Logo.png',
+                height: 30, fit: BoxFit.contain),
+            const SizedBox(width: 8),
+            const Text('Align',
+                style: TextStyle(
+                    color: kBrand, fontSize: 18, fontWeight: FontWeight.w800)),
+          ],
+        ),
+      ),
+      body: SafeArea(
+        child: ListView(
+          padding: const EdgeInsets.fromLTRB(20, 16, 20, 32),
+          children: [
+            const Text(
+              'Compare with your partner',
+              style: TextStyle(
+                fontSize: 22,
+                fontWeight: FontWeight.w800,
+                color: kTextPrimary,
+                letterSpacing: -0.5,
+              ),
+            ),
+            const SizedBox(height: 6),
+            const Text(
+              "Paste the code your partner shared from their results screen. You can compare because you have finished your own assessment.",
+              style: TextStyle(fontSize: 14, color: kTextSub, height: 1.5),
+            ),
+            const SizedBox(height: 20),
+            TextField(
+              controller: _controller,
+              minLines: 1,
+              maxLines: 3,
+              autocorrect: false,
+              onChanged: (_) {
+                if (_error != null) setState(() => _error = null);
+              },
+              decoration: InputDecoration(
+                labelText: "Your partner's code",
+                hintText: 'ALIGN-U5A37234-42',
+                labelStyle: const TextStyle(color: kTextSub),
+                filled: true,
+                fillColor: kSurface,
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: const BorderSide(color: kBorder),
+                ),
+                enabledBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: const BorderSide(color: kBorder),
+                ),
+                focusedBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: const BorderSide(color: kBrand, width: 2),
+                ),
+              ),
+            ),
+            if (_error != null) ...[
+              const SizedBox(height: 12),
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: kScoreRed.withValues(alpha: 0.08),
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: kScoreRed.withValues(alpha: 0.3)),
+                ),
+                child: Row(
+                  children: [
+                    const Icon(Icons.error_outline_rounded,
+                        color: kScoreRed, size: 16),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        _error!,
+                        style: const TextStyle(fontSize: 13, color: kScoreRed),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+            const SizedBox(height: 16),
+            SizedBox(
+              width: double.infinity,
+              child: AlignButton(
+                label: 'Compare',
+                icon: Icons.compare_arrows_rounded,
+                onPressed: _compare,
+              ),
+            ),
+            Center(
+              child: TextButton(
+                onPressed: _paste,
+                child: const Text(
+                  'Paste from clipboard',
+                  style: TextStyle(fontSize: 13, color: kBrand),
+                ),
+              ),
+            ),
+            if (_partner != null) ...[
+              SizedBox(key: _resultKey, height: 12),
+              ..._buildResult(_partner!),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PILLAR GUIDES — diagnosis (free) + 7-day action plan (Pro)
+// ─────────────────────────────────────────────────────────────────────────────
+class PlanDay {
+  final String title;
+  final String task;
+  const PlanDay(this.title, this.task);
+}
+
+class PillarGuide {
+  final String planTitle;
+  final String diagnosis; // free
+  final String startHere; // free, one line
+  final List<PlanDay> days; // Pro, exactly 7
+  const PillarGuide({
+    required this.planTitle,
+    required this.diagnosis,
+    required this.startHere,
+    required this.days,
+  });
+}
+
+// Index order MUST match the `pillars` list:
+// Trust, Respect, Emotional Support, Shared Values, Communication,
+// Physical Intimacy, Future Alignment
+const List<PillarGuide> kPillarGuides = [
+  // 0 — TRUST
+  PillarGuide(
+    planTitle: 'Rebuilding Trust',
+    diagnosis:
+        "Trust is the foundation the other pillars stand on. When it scores lowest, it usually means words and actions do not always match, or it does not feel fully safe to be honest. Small, repeated reliability does more to repair it than one big gesture.",
+    startHere:
+        "Make one small promise today, however minor, and keep it exactly.",
+    days: [
+      PlanDay("Name what trust means",
+          "Write down three things that would make you feel more trusting, and three things you can offer. Keep them specific, like 'tell me when plans change', not 'be more honest'."),
+      PlanDay("Keep one small promise",
+          "Pick one small commitment and do it exactly when you said you would. Reliability in small things is how trust is rebuilt."),
+      PlanDay("Share something unpolished",
+          "Tell your partner one thing you would normally keep to yourself, such as a worry or a small mistake. Choose something low risk and say it without defending yourself."),
+      PlanDay("Respond without defending",
+          "When your partner shares a concern today, reply with 'Thank you for telling me' before anything else. Wait a full breath before explaining or disagreeing."),
+      PlanDay("Be open about your day",
+          "Share where you were and who you spoke to in a relaxed way, not as a report. Openness freely given builds more trust than answers demanded."),
+      PlanDay("Repair one past hurt",
+          "Choose one past moment that damaged trust. Acknowledge it in a sentence or two, say what you would do differently, and do not ask for forgiveness yet."),
+      PlanDay("Review and renew",
+          "Look back at the week. Tell each other one thing that felt safer and one thing that still feels uncertain, then agree on one promise for next week."),
+    ],
+  ),
+
+  // 1 — RESPECT
+  PillarGuide(
+    planTitle: "Restoring Respect",
+    diagnosis:
+        "Respect shows up in tone, interruptions and how you speak about each other to other people. A low score often points to criticism, dismissiveness or feeling talked down to, even when no one means harm. It usually recovers quickly once the daily habits change.",
+    startHere:
+        "Today, do not interrupt once. Let every sentence finish before you reply.",
+    days: [
+      PlanDay("Spot the small slights",
+          "Notice moments today when either of you rolls eyes, sighs, interrupts or mocks. Just count them without commenting. Awareness is the first step."),
+      PlanDay("Soften the opening",
+          "Start any difficult topic with 'I feel... when... I would like...'. Avoid 'you always' and 'you never'."),
+      PlanDay("Say one thing you admire",
+          "Tell your partner one specific thing you respect about them, with an example. 'I respect how you handled that call' lands better than 'you are great'."),
+      PlanDay("Speak well of each other",
+          "Today, mention your partner to friends or family only in a way you would be comfortable with them overhearing."),
+      PlanDay("Ask before assuming",
+          "Before reacting to something that bothered you, ask 'Can you help me understand why?' and listen to the full answer."),
+      PlanDay("Honour a boundary",
+          "Ask what boundary or preference of theirs you have been brushing aside. Agree to respect it, and ask for one of yours in return."),
+      PlanDay("Weekly respect check",
+          "Tell each other when you felt most respected this week and when you felt least. Agree on one habit each to keep or change."),
+    ],
+  ),
+
+  // 2 — EMOTIONAL SUPPORT
+  PillarGuide(
+    planTitle: "Showing Up for Each Other",
+    diagnosis:
+        "Emotional support is feeling that your partner is on your side when things are hard. A low score often means one or both of you cope alone, miss each other's cues, or offer advice when what was wanted was understanding.",
+    startHere:
+        "Next time your partner shares a problem, ask: 'Do you want solutions or just someone to listen?'",
+    days: [
+      PlanDay("Ask and listen",
+          "Ask 'How are you really doing?' and listen for five minutes without fixing, advising or switching to your own story."),
+      PlanDay("Notice the bids",
+          "A bid is a small request for attention, like a sigh, a comment or a 'look at this'. Notice them today and turn towards each one, even briefly."),
+      PlanDay("Name the need",
+          "Tell your partner one thing that would help you feel supported this week. Be concrete: 'ask me about my day' beats 'be more supportive'."),
+      PlanDay("Offer comfort, not a fix",
+          "When your partner is stressed, say 'That sounds hard. I am here.' Offer advice only if they ask for it."),
+      PlanDay("Do one caring task",
+          "Take over one chore or task that is weighing on your partner today, without being asked and without mentioning it afterwards."),
+      PlanDay("Share a vulnerable moment",
+          "Tell your partner about something that made you feel anxious, sad or unsure recently. Let them respond without trying to solve it."),
+      PlanDay("Debrief the week",
+          "Share when you felt most supported this week and when you felt alone. Agree on one thing each to do differently."),
+    ],
+  ),
+
+  // 3 — SHARED VALUES
+  PillarGuide(
+    planTitle: "Finding Common Ground",
+    diagnosis:
+        "Shared values are the beliefs and priorities that guide big decisions, like money, family, faith and how you spend your time. A low score does not mean you must agree on everything. It usually means these things have not been talked about openly, or the differences feel risky to raise.",
+    startHere:
+        "Each write down your top three life priorities, then compare lists without judging.",
+    days: [
+      PlanDay("List your top five values",
+          "Separately, write the five things that matter most to you, such as family, honesty, security, adventure, faith or growth. Do not share yet."),
+      PlanDay("Compare your lists",
+          "Swap lists and talk about where they overlap and where they differ. For each difference, ask 'Tell me more about why this matters to you'."),
+      PlanDay("Talk about money",
+          "Discuss one money question you have not fully talked through, such as saving, spending or helping family. Aim to understand, not to win."),
+      PlanDay("Talk about family and home",
+          "Share what you each want from family, friends and home life, including how much time with others and how much just for the two of you."),
+      PlanDay("Find three shared values",
+          "From your lists, pick three values you share. Write one sentence each on how you already live them out together."),
+      PlanDay("Respect one difference",
+          "Choose one value you hold differently. Agree how each of you can honour it without the other having to change."),
+      PlanDay("Set a shared principle",
+          "Agree on one principle to guide decisions this month, such as 'we decide big purchases together'. Write it down where you both see it."),
+    ],
+  ),
+
+  // 4 — COMMUNICATION
+  PillarGuide(
+    planTitle: "Talking and Listening Better",
+    diagnosis:
+        "Communication is how every other pillar gets worked out. A low score often means important things go unsaid, conversations turn into arguments, or one of you shuts down. These habits are learnable and show results quickly.",
+    startHere:
+        "Before replying in any discussion today, repeat back what you heard: 'So you are saying...'.",
+    days: [
+      PlanDay("Twenty minutes, no phones",
+          "Set aside twenty minutes with no screens to talk about something other than logistics or problems. Ask open questions like 'What was the best part of your day?'."),
+      PlanDay("Reflect before replying",
+          "In every conversation today, summarise what your partner said before you respond. Ask 'Did I get that right?'."),
+      PlanDay("Use a soft start",
+          "Raise one small issue using this pattern: 'I feel [emotion] about [situation]. I would like [request].' Keep it to one issue and one request."),
+      PlanDay("Take a timeout properly",
+          "Agree on a signal for pausing a heated moment. Take twenty minutes apart to calm down, then return and continue. Never use it to avoid the topic."),
+      PlanDay("Say the unsaid thing",
+          "Share one thing you have been holding back, kindly and calmly. Begin with 'This is hard to say, but it matters to me.'"),
+      PlanDay("Appreciate out loud",
+          "Thank your partner for three specific things today. Appreciation makes hard conversations easier."),
+      PlanDay("Plan a weekly check-in",
+          "Agree on a fixed twenty-minute weekly slot to talk about what is working, what is not and what you need. Put it in both calendars."),
+    ],
+  ),
+
+  // 5 — PHYSICAL INTIMACY
+  PillarGuide(
+    planTitle: "Reconnecting Physically",
+    diagnosis:
+        "Physical intimacy covers affection, touch and sex. A low score often reflects stress, mismatched needs or a loss of everyday affection, not a lack of love. It is also the pillar couples find hardest to discuss, so starting the conversation is half the work.",
+    startHere:
+        "Offer a 20-second hug today, without it needing to lead to anything else.",
+    days: [
+      PlanDay("Everyday touch",
+          "Add small, non-sexual touch today: a hand on the back, holding hands, a long hug. No pressure for it to go anywhere."),
+      PlanDay("Say what feels good",
+          "Tell your partner one kind of touch or affection you enjoy and would like more of. Keep it positive and specific."),
+      PlanDay("Ask about their needs",
+          "Ask 'What would make you feel more connected to me physically?' Listen without defending or promising anything yet."),
+      PlanDay("Create the conditions",
+          "Plan one low-stress evening: phones away, no chores, something relaxing. Connection is easier when neither of you is rushed or tired."),
+      PlanDay("Talk about pace and comfort",
+          "Agree how you will signal 'yes', 'not now' or 'slower'. A clear, safe way to say no makes it easier to say yes."),
+      PlanDay("Try something new together",
+          "Choose a low-pressure new way to be close, like a massage or a slow dance. Agree beforehand that either of you can stop at any time."),
+      PlanDay("Review how it felt",
+          "Share what felt good this week and what you would like next. Agree on one small habit of daily affection to keep."),
+    ],
+  ),
+
+  // 6 — FUTURE ALIGNMENT
+  PillarGuide(
+    planTitle: "Building a Shared Future",
+    diagnosis:
+        "Future alignment is whether you are heading in the same direction on the big things: where you live, children, careers, money and the kind of life you want. A low score often means these topics have been avoided, or that you are assuming you want the same things.",
+    startHere:
+        "Each finish this sentence, then compare: 'In five years I would love our life to look like...'",
+    days: [
+      PlanDay("Picture five years ahead",
+          "Separately, write a few lines on where you want to live, work and spend your time in five years. Do not share yet."),
+      PlanDay("Share your pictures",
+          "Read your answers aloud to each other. Highlight what matches, what is close and what is different."),
+      PlanDay("Talk about the big decisions",
+          "Discuss one major decision you may face, such as marriage, children, moving or a career change. Say what you want and why, and listen to the same from your partner."),
+      PlanDay("Find the overlap",
+          "List three things you both want in the future. Make them concrete, like 'own a home' or 'travel once a year'."),
+      PlanDay("Name one non-negotiable",
+          "Each share one thing you cannot compromise on and one thing you are flexible about. Explain why, and acknowledge your partner's answer without arguing."),
+      PlanDay("Take one small step",
+          "Pick one shared goal and take a first action today, like opening a savings pot, booking a visit or researching a move."),
+      PlanDay("Set a quarterly check-in",
+          "Agree a date within the next three months to review your goals together. Plans change, so what matters is staying in the conversation."),
+    ],
+  ),
+];
+
+// ─────────────────────────────────────────────────────────────────────────────
 // RESULTS PAGE
 // ─────────────────────────────────────────────────────────────────────────────
 class ResultsPage extends StatefulWidget {
@@ -3507,10 +4238,24 @@ class _ResultsPageState extends State<ResultsPage> {
   bool isPremium = false;
   bool _loadingPremium = true;
   bool _saved = false;
+  late int _planIndex;
+
+  // ── Focus-area helpers ──────────────────────────────────────────────────
+  bool get _allEqual => widget.scores.every((s) => s == widget.scores.first);
+
+  double get _lowestScore => widget.scores.reduce((a, b) => a < b ? a : b);
+
+  int get _focusIndex => widget.scores.indexOf(_lowestScore);
+
+  List<int> get _lowestIndexes => [
+        for (int i = 0; i < widget.scores.length; i++)
+          if (widget.scores[i] == _lowestScore) i
+      ];
 
   @override
   void initState() {
     super.initState();
+    _planIndex = _allEqual ? 0 : _focusIndex;
     _loadPremium();
     _saveAssessment();
   }
@@ -3778,15 +4523,6 @@ class _ResultsPageState extends State<ResultsPage> {
                     children: [
                       const SectionHeading('Relationship Structure Map'),
                       PillarRadarChart(scores: widget.scores),
-                      if (!isPremium)
-                        const Padding(
-                          padding: EdgeInsets.only(top: 6),
-                          child: Text(
-                            'Unlock exact scores, stability ratings and deeper insight with Pro.',
-                            style: TextStyle(
-                                fontSize: 12, color: kTextSub, height: 1.4),
-                          ),
-                        ),
                     ],
                   ),
                 ),
@@ -3830,8 +4566,14 @@ class _ResultsPageState extends State<ResultsPage> {
 
                 const SizedBox(height: 14),
 
+                // ── FOCUS AREA (free) ────────────────────────────────────────
+                _buildFocusCard(),
+                const SizedBox(height: 14),
+
                 // ── PREMIUM CONTENT ──────────────────────────────────────────
                 if (isPremium) ...[
+                  _buildPlanCard(),
+                  const SizedBox(height: 14),
                   AlignCard(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
@@ -3896,9 +4638,11 @@ class _ResultsPageState extends State<ResultsPage> {
                               ),
                             ),
                             const SizedBox(height: 12),
-                            const Text(
-                              'Unlock your full analysis',
-                              style: TextStyle(
+                            Text(
+                              _allEqual
+                                  ? 'Unlock your full analysis'
+                                  : 'Unlock your 7-day plan for ${pillars[_focusIndex]}',
+                              style: const TextStyle(
                                 fontSize: 17,
                                 fontWeight: FontWeight.w700,
                                 color: kTextPrimary,
@@ -3907,7 +4651,8 @@ class _ResultsPageState extends State<ResultsPage> {
                             const SizedBox(height: 6),
                             const Text(
                               'Get your exact pillar scores, alignment distribution, '
-                              'stability ratings and a full structural insight into your relationship.',
+                              'stability ratings, a deep structural insight and a '
+                              '7-day action plan for every pillar.',
                               style: TextStyle(
                                   fontSize: 13, color: kTextSub, height: 1.5),
                             ),
@@ -3958,6 +4703,10 @@ class _ResultsPageState extends State<ResultsPage> {
 
                 if (!isPremium && !kDebugMode) const SizedBox(height: 14),
 
+                // ── PARTNER COMPARE ──────────────────────────────────────────
+                _buildPartnerCard(),
+                const SizedBox(height: 14),
+
                 // ── SHARE ────────────────────────────────────────────────────
                 SizedBox(
                   width: double.infinity,
@@ -3984,6 +4733,265 @@ class _ResultsPageState extends State<ResultsPage> {
                 const SizedBox(height: 32),
               ],
             ),
+    );
+  }
+
+  // FREE — names the weakest pillar and gives one starting step
+  Widget _buildFocusCard() {
+    if (_allEqual) {
+      return const AlignCard(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            SectionHeading('Your Focus Area'),
+            Text(
+              'You rated every pillar the same, so there is no single weak spot. '
+              'Pick the pillar that matters most to you and start there.',
+              style: TextStyle(fontSize: 14, color: kTextPrimary, height: 1.5),
+            ),
+          ],
+        ),
+      );
+    }
+    final idx = _focusIndex;
+    final guide = kPillarGuides[idx];
+    final also =
+        _lowestIndexes.where((i) => i != idx).map((i) => pillars[i]).toList();
+
+    return AlignCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SectionHeading('Your Focus Area: ${pillars[idx]}'),
+          Text(
+            guide.diagnosis,
+            style:
+                const TextStyle(fontSize: 14, color: kTextPrimary, height: 1.5),
+          ),
+          if (also.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(top: 8),
+              child: Text(
+                'Also scored equally low: ${also.join(', ')}.',
+                style: const TextStyle(fontSize: 13, color: kTextSub),
+              ),
+            ),
+          const SizedBox(height: 12),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              color: kBrand.withValues(alpha: 0.08),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'START HERE',
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: 0.8,
+                    color: kBrandDark,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  guide.startHere,
+                  style: const TextStyle(
+                      fontSize: 14, color: kBrandDark, height: 1.5),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // PRO — full 7-day plan, any pillar selectable
+  Widget _buildPlanCard() {
+    final guide = kPillarGuides[_planIndex];
+    return AlignCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const SectionHeading('7-Day Action Plan'),
+          Wrap(
+            spacing: 6,
+            runSpacing: 2,
+            children: List.generate(pillars.length, (i) {
+              final selected = i == _planIndex;
+              return ChoiceChip(
+                label: Text(kShortPillars[i]),
+                selected: selected,
+                showCheckmark: false,
+                labelPadding: const EdgeInsets.symmetric(horizontal: 2),
+                visualDensity: VisualDensity.compact,
+                materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                onSelected: (_) => setState(() => _planIndex = i),
+                selectedColor: kBrand,
+                backgroundColor: kSurface,
+                side: BorderSide(color: selected ? kBrand : kBorder),
+                labelStyle: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                  color: selected ? kSurface : kTextPrimary,
+                ),
+              );
+            }),
+          ),
+          if (!_allEqual)
+            const Padding(
+              padding: EdgeInsets.only(top: 8),
+              child: Text(
+                'Your lowest pillar is selected first. Tap any pillar to see its plan.',
+                style: TextStyle(fontSize: 11, color: kTextSub, height: 1.4),
+              ),
+            ),
+          const SizedBox(height: 14),
+          Text(
+            guide.planTitle,
+            style: const TextStyle(
+              fontSize: 16,
+              fontWeight: FontWeight.w700,
+              color: kBrandDark,
+            ),
+          ),
+          const SizedBox(height: 12),
+          ...List.generate(guide.days.length, (d) {
+            final day = guide.days[d];
+            return Padding(
+              padding: const EdgeInsets.only(bottom: 14),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Container(
+                    width: 28,
+                    height: 28,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: kBrand.withValues(alpha: 0.12),
+                    ),
+                    child: Center(
+                      child: Text(
+                        '${d + 1}',
+                        style: const TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w800,
+                          color: kBrand,
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          day.title,
+                          style: const TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w700,
+                            color: kTextPrimary,
+                          ),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          day.task,
+                          style: const TextStyle(
+                              fontSize: 13, color: kTextSub, height: 1.5),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            );
+          }),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: kBrandLight,
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: const Text(
+              'These exercises are for relationships where you both feel safe. '
+              'If you ever feel afraid, controlled or unsafe, skip them and '
+              'reach out to a qualified professional or a local support service.',
+              style: TextStyle(fontSize: 11.5, color: kBrandDark, height: 1.5),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _shareMyCode() {
+    final code = PartnerCode.encode(widget.lens, widget.scores);
+    SharePlus.instance.share(
+      ShareParams(
+        text:
+            "Let's compare our relationship results on Align. My code: $code\n\n"
+            "Take the free assessment, then tap 'Compare with your partner' on your results screen and enter my code.\n"
+            "${ShareService.playUrl}",
+      ),
+    );
+  }
+
+  Future<void> _openCompare() async {
+    await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => PartnerComparePage(
+          myScores: widget.scores,
+          myLens: widget.lens,
+          isPremium: isPremium,
+        ),
+      ),
+    );
+    if (mounted) _loadPremium();
+  }
+
+  Widget _buildPartnerCard() {
+    return AlignCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const SectionHeading('Compare with your partner'),
+          const Text(
+            "Each of you takes the assessment, then you swap codes. You only see each other's results once you have both finished.",
+            style: TextStyle(fontSize: 13, color: kTextSub, height: 1.5),
+          ),
+          const SizedBox(height: 8),
+          const Text(
+            'Your code contains your seven pillar scores, so only share it with your partner.',
+            style: TextStyle(fontSize: 12, color: kTextSub, height: 1.4),
+          ),
+          const SizedBox(height: 14),
+          SizedBox(
+            width: double.infinity,
+            child: AlignButton(
+              label: 'Share my code',
+              icon: Icons.share_rounded,
+              onPressed: _shareMyCode,
+            ),
+          ),
+          const SizedBox(height: 10),
+          SizedBox(
+            width: double.infinity,
+            child: AlignButton(
+              label: "Enter partner's code",
+              icon: Icons.people_alt_outlined,
+              outline: true,
+              onPressed: _openCompare,
+            ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -4282,6 +5290,9 @@ class _PaywallPageState extends State<PaywallPage> {
                           _FeatureRow(
                               icon: Icons.insights_rounded,
                               text: 'Deep Structural Insight'),
+                          _FeatureRow(
+                              icon: Icons.checklist_rounded,
+                              text: '7-Day Action Plan for Every Pillar'),
                           _FeatureRow(
                               icon: Icons.show_chart_rounded,
                               text:
