@@ -295,6 +295,16 @@ class AssessmentService {
       return false;
     }
   }
+
+  static Future<bool> deleteMany(List<String> ids) async {
+    if (ids.isEmpty) return true;
+    try {
+      await supabase.from('assessments').delete().inFilter('id', ids);
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -352,142 +362,163 @@ class _OnboardingPageState extends State<OnboardingPage> {
   Widget build(BuildContext context) {
     return Scaffold(
       body: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 32),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.center,
-            children: [
-              const Spacer(),
-              Center(
-                child: Image.asset(
-                  'assets/images/Align-Logo.png',
-                  height: 220,
-                  fit: BoxFit.contain,
-                ),
-              ),
-              const SizedBox(height: 16),
-              const Text(
-                'In 2 minutes, know exactly where your relationship stands — scored, graded, and broken down pillar by pillar.',
-                textAlign: TextAlign.center,
-                style: TextStyle(fontSize: 17, color: kTextSub, height: 1.5),
-              ),
-              const SizedBox(height: 8),
-              const Text(
-                'Most people are surprised by at least one result.',
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                    fontSize: 14, color: kBrand, fontWeight: FontWeight.w600),
-              ),
-              const Spacer(),
-              const AlignCard(
-                color: kBrandLight,
-                padding: EdgeInsets.all(16),
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Icon(Icons.info_outline_rounded, size: 18, color: kTextSub),
-                    SizedBox(width: 10),
-                    Expanded(
-                      child: Text(
-                        'Align is a self-reflection tool. It is not a substitute '
-                        'for professional relationship counselling or therapy. '
-                        'If you are experiencing serious difficulties, please '
-                        'seek guidance from a qualified professional.',
+        child: LayoutBuilder(
+          builder: (context, constraints) => SingleChildScrollView(
+            child: ConstrainedBox(
+              constraints: BoxConstraints(minHeight: constraints.maxHeight),
+              child: IntrinsicHeight(
+                child: Padding(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 28, vertical: 32),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.center,
+                    children: [
+                      const Spacer(),
+                      Center(
+                        child: Image.asset(
+                          'assets/images/Align-Logo.png',
+                          height: 220,
+                          fit: BoxFit.contain,
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+                      const Text(
+                        'In 2 minutes, know exactly where your relationship stands — scored, graded, and broken down pillar by pillar.',
+                        textAlign: TextAlign.center,
                         style: TextStyle(
-                            fontSize: 12.5, color: kTextSub, height: 1.55),
+                            fontSize: 17, color: kTextSub, height: 1.5),
                       ),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 20),
-              SizedBox(
-                width: double.infinity,
-                child: AlignButton(
-                  label: 'Start Assessment',
-                  icon: Icons.arrow_forward_rounded,
-                  onPressed: () => Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                        builder: (_) => const LensSelectionPage()),
+                      const SizedBox(height: 8),
+                      const Text(
+                        'Most people are surprised by at least one result.',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                            fontSize: 14,
+                            color: kBrand,
+                            fontWeight: FontWeight.w600),
+                      ),
+                      const Spacer(),
+                      const AlignCard(
+                        color: kBrandLight,
+                        padding: EdgeInsets.all(16),
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Icon(Icons.info_outline_rounded,
+                                size: 18, color: kTextSub),
+                            SizedBox(width: 10),
+                            Expanded(
+                              child: Text(
+                                'Align is a self-reflection tool. It is not a substitute '
+                                'for professional relationship counselling or therapy. '
+                                'If you are experiencing serious difficulties, please '
+                                'seek guidance from a qualified professional.',
+                                style: TextStyle(
+                                    fontSize: 12.5,
+                                    color: kTextSub,
+                                    height: 1.55),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 20),
+                      SizedBox(
+                        width: double.infinity,
+                        child: AlignButton(
+                          label: 'Start Assessment',
+                          icon: Icons.arrow_forward_rounded,
+                          onPressed: () => Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                                builder: (_) => const LensSelectionPage()),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          if (_supabaseReady && AuthService.isSignedIn) ...[
+                            TextButton.icon(
+                              onPressed: () => Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                    builder: (_) =>
+                                        const AssessmentHistoryPage()),
+                              ),
+                              icon: const Icon(Icons.history_rounded,
+                                  size: 16, color: kBrand),
+                              label: const Text('My History',
+                                  style:
+                                      TextStyle(fontSize: 13, color: kBrand)),
+                            ),
+                            const Text('·',
+                                style:
+                                    TextStyle(fontSize: 12, color: kTextSub)),
+                            TextButton(
+                              onPressed: () async {
+                                await AuthService.signOut();
+                                setState(() {});
+                              },
+                              child: const Text('Sign Out',
+                                  style:
+                                      TextStyle(fontSize: 13, color: kTextSub)),
+                            ),
+                          ] else if (_supabaseReady) ...[
+                            TextButton(
+                              onPressed: () async {
+                                final result = await Navigator.push<bool>(
+                                  context,
+                                  MaterialPageRoute(
+                                      builder: (_) => const AuthPage()),
+                                );
+                                if (result == true) setState(() {});
+                              },
+                              child: const Text(
+                                'Sign in to save your history',
+                                style: TextStyle(fontSize: 13, color: kBrand),
+                              ),
+                            ),
+                          ],
+                        ],
+                      ),
+                      const SizedBox(height: 4),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          TextButton(
+                            onPressed: () => Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                  builder: (_) => const PrivacyPolicyPage()),
+                            ),
+                            child: const Text(
+                              'Privacy Policy',
+                              style: TextStyle(fontSize: 12, color: kTextSub),
+                            ),
+                          ),
+                          const Text('·',
+                              style: TextStyle(fontSize: 12, color: kTextSub)),
+                          TextButton(
+                            onPressed: () => Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                  builder: (_) => const TermsOfServicePage()),
+                            ),
+                            child: const Text(
+                              'Terms of Service',
+                              style: TextStyle(fontSize: 12, color: kTextSub),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 8),
+                    ],
                   ),
                 ),
               ),
-              const SizedBox(height: 12),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  if (_supabaseReady && AuthService.isSignedIn) ...[
-                    TextButton.icon(
-                      onPressed: () => Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                            builder: (_) => const AssessmentHistoryPage()),
-                      ),
-                      icon: const Icon(Icons.history_rounded,
-                          size: 16, color: kBrand),
-                      label: const Text('My History',
-                          style: TextStyle(fontSize: 13, color: kBrand)),
-                    ),
-                    const Text('·',
-                        style: TextStyle(fontSize: 12, color: kTextSub)),
-                    TextButton(
-                      onPressed: () async {
-                        await AuthService.signOut();
-                        setState(() {});
-                      },
-                      child: const Text('Sign Out',
-                          style: TextStyle(fontSize: 13, color: kTextSub)),
-                    ),
-                  ] else if (_supabaseReady) ...[
-                    TextButton(
-                      onPressed: () async {
-                        final result = await Navigator.push<bool>(
-                          context,
-                          MaterialPageRoute(builder: (_) => const AuthPage()),
-                        );
-                        if (result == true) setState(() {});
-                      },
-                      child: const Text(
-                        'Sign in to save your history',
-                        style: TextStyle(fontSize: 13, color: kBrand),
-                      ),
-                    ),
-                  ],
-                ],
-              ),
-              const SizedBox(height: 4),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  TextButton(
-                    onPressed: () => Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                          builder: (_) => const PrivacyPolicyPage()),
-                    ),
-                    child: const Text(
-                      'Privacy Policy',
-                      style: TextStyle(fontSize: 12, color: kTextSub),
-                    ),
-                  ),
-                  const Text('·',
-                      style: TextStyle(fontSize: 12, color: kTextSub)),
-                  TextButton(
-                    onPressed: () => Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                          builder: (_) => const TermsOfServicePage()),
-                    ),
-                    child: const Text(
-                      'Terms of Service',
-                      style: TextStyle(fontSize: 12, color: kTextSub),
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 8),
-            ],
+            ),
           ),
         ),
       ),
@@ -1348,7 +1379,79 @@ class _AssessmentHistoryPageState extends State<AssessmentHistoryPage> {
     });
   }
 
+  Future<void> _openPaywall() async {
+    final purchased = await Navigator.push<bool>(
+      context,
+      MaterialPageRoute(builder: (_) => const PaywallPage()),
+    );
+    if (purchased == true && mounted) setState(() => _isPremium = true);
+  }
+
+  void _enterSelectModeEmpty() {
+    setState(() => _selectionMode = true);
+  }
+
+  void _toggleSelectAll() {
+    setState(() {
+      if (_selectedIds.length == _history.length) {
+        _selectedIds.clear();
+      } else {
+        _selectedIds
+          ..clear()
+          ..addAll(_history.map((e) => e['id'] as String));
+      }
+    });
+  }
+
+  Future<void> _deleteSelected() async {
+    final count = _selectedIds.length;
+    if (count == 0) return;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Text(
+          'Delete $count assessment${count == 1 ? '' : 's'}?',
+          style: const TextStyle(
+              fontSize: 17, fontWeight: FontWeight.w700, color: kTextPrimary),
+        ),
+        content: const Text(
+          'This cannot be undone.',
+          style: TextStyle(fontSize: 14, color: kTextSub),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel', style: TextStyle(color: kTextSub)),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Delete', style: TextStyle(color: kScoreRed)),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    final ok = await AssessmentService.deleteMany(_selectedIds.toList());
+    if (!mounted) return;
+    if (!ok) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Could not delete. Please try again.'),
+          backgroundColor: kScoreRed,
+        ),
+      );
+      return;
+    }
+    _exitSelectionMode();
+    await _loadHistory();
+  }
+
   void _plotSelected() {
+    if (!_isPremium) {
+      _openPaywall();
+      return;
+    }
     final selected = _history
         .where((item) => _selectedIds.contains(item['id'] as String))
         .toList();
@@ -1461,6 +1564,12 @@ class _AssessmentHistoryPageState extends State<AssessmentHistoryPage> {
                 label: const Text('Progress',
                     style: TextStyle(fontSize: 13, color: kBrand)),
               ),
+            if (!_selectionMode && _history.isNotEmpty)
+              TextButton(
+                onPressed: _enterSelectModeEmpty,
+                child: const Text('Select',
+                    style: TextStyle(fontSize: 13, color: kBrand)),
+              ),
             if (_selectionMode)
               TextButton(
                 onPressed: _exitSelectionMode,
@@ -1509,7 +1618,7 @@ class _AssessmentHistoryPageState extends State<AssessmentHistoryPage> {
                             20,
                             16,
                             20,
-                            _selectionMode ? 100 : 32,
+                            _selectionMode ? 170 : 32,
                           ),
                           itemCount: _history.length,
                           itemBuilder: (context, i) {
@@ -1700,24 +1809,56 @@ class _AssessmentHistoryPageState extends State<AssessmentHistoryPage> {
                                 ),
                               ],
                             ),
-                            child: Row(
+                            child: Column(
+                              mainAxisSize: MainAxisSize.min,
                               children: [
-                                Expanded(
-                                  child: Text(
-                                    '${_selectedIds.length} selected',
-                                    style: const TextStyle(
-                                      fontSize: 14,
-                                      fontWeight: FontWeight.w600,
-                                      color: kTextPrimary,
+                                Row(
+                                  children: [
+                                    Expanded(
+                                      child: Text(
+                                        '${_selectedIds.length} selected',
+                                        style: const TextStyle(
+                                          fontSize: 14,
+                                          fontWeight: FontWeight.w600,
+                                          color: kTextPrimary,
+                                        ),
+                                      ),
                                     ),
-                                  ),
+                                    TextButton(
+                                      onPressed: _toggleSelectAll,
+                                      child: Text(
+                                        _selectedIds.length == _history.length
+                                            ? 'Clear'
+                                            : 'Select all',
+                                        style: const TextStyle(
+                                            fontSize: 13, color: kBrand),
+                                      ),
+                                    ),
+                                    TextButton.icon(
+                                      onPressed: _selectedIds.isEmpty
+                                          ? null
+                                          : _deleteSelected,
+                                      icon: const Icon(
+                                          Icons.delete_outline_rounded,
+                                          size: 18),
+                                      label: const Text('Delete'),
+                                      style: TextButton.styleFrom(
+                                          foregroundColor: kScoreRed),
+                                    ),
+                                  ],
                                 ),
-                                AlignButton(
-                                  label: 'Plot Selected',
-                                  icon: Icons.show_chart_rounded,
-                                  onPressed: _selectedIds.length >= 2
-                                      ? _plotSelected
-                                      : null,
+                                const SizedBox(height: 6),
+                                SizedBox(
+                                  width: double.infinity,
+                                  child: AlignButton(
+                                    label: 'Plot Selected',
+                                    icon: _isPremium
+                                        ? Icons.show_chart_rounded
+                                        : Icons.lock_outline_rounded,
+                                    onPressed: _selectedIds.length >= 2
+                                        ? _plotSelected
+                                        : null,
+                                  ),
                                 ),
                               ],
                             ),
@@ -3791,6 +3932,9 @@ class _PartnerComparePageState extends State<PartnerComparePage> {
           const SectionHeading('Pillar by pillar'),
           ...List.generate(pillars.length, (i) {
             final g = gaps[i];
+            final bothLow = g <= 1 && mine[i] <= 4 && theirs[i] <= 4;
+            final chipLabel = bothLow ? 'Both low' : _gapLabel(g);
+            final chipColor = bothLow ? kScoreRed : _gapColor(g);
             return Padding(
               padding: const EdgeInsets.only(bottom: 12),
               child: Row(
@@ -3819,15 +3963,15 @@ class _PartnerComparePageState extends State<PartnerComparePage> {
                     padding:
                         const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                     decoration: BoxDecoration(
-                      color: _gapColor(g).withValues(alpha: 0.12),
+                      color: chipColor.withValues(alpha: 0.12),
                       borderRadius: BorderRadius.circular(20),
                     ),
                     child: Text(
-                      _gapLabel(g),
+                      chipLabel,
                       style: TextStyle(
                         fontSize: 12,
                         fontWeight: FontWeight.w600,
-                        color: _gapColor(g),
+                        color: chipColor,
                       ),
                     ),
                   ),
